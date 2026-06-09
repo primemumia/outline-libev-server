@@ -1,25 +1,19 @@
 # On derlenmis binary'ler
 
-Kurulum scripti mimariye gore bu dizinden `ss-server` ve `ss-manager` kopyalar.
-Kaynak derleme yapmaz (~1 dk kurulum).
+Sunucu kurulumu **yalnizca** bu dizindeki `ss-server` ve `ss-manager` dosyalarini kullanir; kaynak derleme yapilmaz.
 
 | Dizin | Mimari |
 |-------|--------|
 | `x86_64/` | Intel/AMD 64-bit (Ubuntu 22.04/24.04) |
-| `aarch64/` | ARM64 (henuz eklenmedi — sunucuda derlenir) |
+| `aarch64/` | ARM64 (henuz eklenmedi) |
 
-Yeniden derlemek icin WSL:
+Gelistirici makinede (WSL) yeniden derlemek:
 
 ```bash
 bash server/build-wsl.sh
-```
-
-Zorla kaynak derleme (sunucuda):
-
-```bash
-export LIBEV_FORCE_BUILD=1
-sudo bash install_server.sh
+git add server/bin/x86_64/ss-server server/bin/x86_64/ss-manager
+git commit -m "Prebuilt binary guncelle"
+git push
 ```
 
 Canli port durumu `/run/shadowsocks-manager/` altinda tutulur (RAM/tmpfs, reboot sonrasi silinir).
-Journal/syslog'a IP veya baglanti bilgisi yazilmaz; sadece `libev status port N` ile gorulur.

@@ -30,8 +30,8 @@ sudo bash install_server.sh --api-port 8087 --manager-port 6001
 
 ## Kurulum sonrası
 
-Kurulum oncelikle `server/bin/{x86_64|aarch64}/` icindeki on derlenmis binary'leri kullanir.
-Binary yoksa veya `LIBEV_FORCE_BUILD=1` ise kaynaktan derler.
+Kurulum **yalnizca** `server/bin/{x86_64|aarch64}/` icindeki on derlenmis binary'leri kullanir; sunucuda derleme yapilmaz.
+Binary yoksa kurulum hata verir. Gelistirici: `bash server/build-wsl.sh` + GitHub push.
 
 | Bileşen | Konum |
 |---------|--------|
@@ -54,13 +54,12 @@ Repo kök yapısı:
 ```
 repo/
   server/
+    bin/x86_64/           # ss-server, ss-manager (on derlenmis)
     install_scripts/
       install_server.sh
       README.md
-    shadowsocks-libev/    # patch'li kaynak + submodule
+    shadowsocks-libev/    # patch kaynak (sadece gelistirici derlemesi icin)
     ss-api/
-    shadowsocks-manager.service
-    ss-api.service
 ```
 
 `install_server.sh` içinde varsayılan repo adını güncelleyin:

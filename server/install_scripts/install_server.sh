@@ -15,7 +15,6 @@
 #   LIBEV_WORKDIR       ss-manager workdir (varsayilan: /var/lib/shadowsocks-manager)
 #   LIBEV_PORT_START    Port havuzu baslangic (444)
 #   LIBEV_PORT_END      Port havuzu bitis (999)
-#   LIBEV_FORCE_BUILD   1 ise kaynak derleme (on derlenmis binary yok sayilir)
 #
 # Bayraklar:
 #   --hostname HOST     Sunucu public IP veya domain
@@ -40,7 +39,6 @@ readonly LIBEV_BRANCH="${LIBEV_BRANCH:-main}"
 readonly LIBEV_INSTALL_DIR="${LIBEV_INSTALL_DIR:-/opt/libev-server}"
 readonly LIBEV_WORKDIR="${LIBEV_WORKDIR:-/var/lib/shadowsocks-manager}"
 readonly LIBEV_SS_API_DIR="${LIBEV_SS_API_DIR:-/opt/ss-api}"
-readonly LIBEV_SRC_DIR="${LIBEV_SRC_DIR:-/opt/shadowsocks-libev}"
 readonly LIBEV_PORT_START="${LIBEV_PORT_START:-444}"
 readonly LIBEV_PORT_END="${LIBEV_PORT_END:-999}"
 readonly MANAGER_SOCKET="${MANAGER_SOCKET:-${LIBEV_WORKDIR}/manager.sock}"
@@ -57,13 +55,20 @@ PREBUILT_BIN_DIR=""
 FULL_LOG="$(mktemp -t libev_install_logXXXXXX)"
 LAST_ERROR="$(mktemp -t libev_install_errXXXXXX)"
 readonly FULL_LOG LAST_ERROR
-readonly STEP_LINE_WIDTH=47
+readonly STEP_LINE_WIDTH=52
+readonly STEP_MSG_MAX=34
+readonly STEP_STATUS_WIDTH=7
 
 function print_step_line() {
     local msg="$1"
     local status="$2"
+    if (( ${#msg} > STEP_MSG_MAX )); then
+        msg="${msg:0:$(( STEP_MSG_MAX - 3 ))}..."
+    fi
     local prefix="> ${msg}"
-    local -i dots=$(( STEP_LINE_WIDTH - ${#prefix} - ${#status} - 1 ))
+    local status_pad
+    status_pad="$(printf '%-*s' "${STEP_STATUS_WIDTH}" "${status}")"
+    local -i dots=$(( STEP_LINE_WIDTH - ${#prefix} - STEP_STATUS_WIDTH - 1 ))
     if (( dots < 2 )); then
         dots=2
     fi
@@ -72,10 +77,14 @@ function print_step_line() {
     for ((_i = 0; _i < dots; _i++)); do
         dotstr+="."
     done
+    local line="${prefix} ${dotstr} ${status_pad}"
+    while (( ${#line} < STEP_LINE_WIDTH )); do
+        line+=" "
+    done
     if [[ "${status}" == "WAITING" ]]; then
-        printf '\r%s %s %s' "${prefix}" "${dotstr}" "${status}"
+        printf '\r%s' "${line}"
     else
-        printf '\r%s %s %s\n' "${prefix}" "${dotstr}" "${status}"
+        printf '\r%s\n' "${line}"
     fi
 }
 
@@ -105,7 +114,15 @@ function log_start_step() {
 }
 
 function log_command() {
-    ( "$@" ) >> "${FULL_LOG}" 2>> "${LAST_ERROR}" </dev/null
+    local rc=0
+    "$@" >> "${FULL_LOG}" 2>> "${FULL_LOG}" </dev/null || rc=$?
+    if (( rc != 0 )); then
+        {
+            echo "--- komut basarisiz (cikis ${rc}): $* ---"
+            tail -30 "${FULL_LOG}"
+        } >> "${LAST_ERROR}"
+    fi
+    return "${rc}"
 }
 
 function apt_update() {
@@ -191,10 +208,8 @@ function detect_public_ip() {
 function install_dependencies() {
     apt_update
     apt_install \
-        build-essential cmake git autoconf libtool pkg-config \
-        libev-dev libpcre2-dev libmbedtls-dev libsodium-dev libc-ares-dev \
-        libcap2-bin libsystemd-dev python3 python3-pip curl ca-certificates \
-        rsync nginx openssl
+        python3 python3-pip curl ca-certificates git \
+        rsync nginx openssl libcap2-bin
 }
 
 function cache_prebuilt_from_dir() {
@@ -215,23 +230,25 @@ function try_cache_prebuilt() {
 }
 
 function fetch_server_sources() {
-    mkdir -p "${LIBEV_INSTALL_DIR}" "${LIBEV_WORKDIR}" "${LIBEV_SS_API_DIR}" "${LIBEV_SRC_DIR}" /etc/libev
+    mkdir -p "${LIBEV_INSTALL_DIR}" "${LIBEV_WORKDIR}" "${LIBEV_SS_API_DIR}" /etc/libev
 
     if (( FLAGS_LOCAL == 1 )); then
         local src_root="${LIBEV_SOURCE_DIR}"
         if [[ -z "${src_root}" ]]; then
             src_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
         fi
-        if [[ ! -d "${src_root}/shadowsocks-libev" ]]; then
-            log_error "Yerel kaynak bulunamadi: ${src_root}/shadowsocks-libev"
+        if [[ ! -d "${src_root}/ss-api" ]]; then
+            log_error "Yerel ss-api bulunamadi: ${src_root}/ss-api"
             exit 1
         fi
-        rsync -a --delete "${src_root}/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
+        if ! try_cache_prebuilt "${src_root}/bin/${MACHINE_TYPE}"; then
+            log_error "On derlenmis binary bulunamadi: ${src_root}/bin/${MACHINE_TYPE}/"
+            return 1
+        fi
         rsync -a "${src_root}/ss-api/" "${LIBEV_SS_API_DIR}/"
         if [[ -f "${src_root}/install_scripts/uninstall_server.sh" ]]; then
             install -m 755 "${src_root}/install_scripts/uninstall_server.sh" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
         fi
-        try_cache_prebuilt "${src_root}/bin/${MACHINE_TYPE}" || true
         return 0
     fi
 
@@ -239,48 +256,39 @@ function fetch_server_sources() {
     clone_dir="$(mktemp -d /tmp/libev-src.XXXXXX)"
     local repo_url="https://github.com/${LIBEV_REPO}.git"
 
-    git clone -q --depth 1 --branch "${LIBEV_BRANCH}" --recurse-submodules "${repo_url}" "${clone_dir}"
+    git clone -q --depth 1 --filter=blob:none --sparse --branch "${LIBEV_BRANCH}" \
+        "${repo_url}" "${clone_dir}"
+    git -C "${clone_dir}" sparse-checkout set server/bin server/ss-api server/install_scripts
 
-    if [[ ! -d "${clone_dir}/server/shadowsocks-libev" ]]; then
-        log_error "Repo yapisi hatali: server/shadowsocks-libev bulunamadi (${LIBEV_REPO})"
+    if [[ ! -d "${clone_dir}/server/ss-api" ]]; then
+        log_error "Repo yapisi hatali: server/ss-api bulunamadi (${LIBEV_REPO})"
+        rm -rf "${clone_dir}"
         exit 1
     fi
 
-    rsync -a --delete "${clone_dir}/server/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
+    if ! try_cache_prebuilt "${clone_dir}/server/bin/${MACHINE_TYPE}"; then
+        log_error "On derlenmis binary bulunamadi: server/bin/${MACHINE_TYPE}/"
+        log_error "Gelistirici: bash server/build-wsl.sh calistirip GitHub'a push edin."
+        rm -rf "${clone_dir}"
+        return 1
+    fi
+
     rsync -a "${clone_dir}/server/ss-api/" "${LIBEV_SS_API_DIR}/"
     if [[ -f "${clone_dir}/server/install_scripts/uninstall_server.sh" ]]; then
         install -m 755 "${clone_dir}/server/install_scripts/uninstall_server.sh" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
     fi
-    try_cache_prebuilt "${clone_dir}/server/bin/${MACHINE_TYPE}" || true
 
     rm -rf "${clone_dir}"
 }
 
 function install_shadowsocks_binaries() {
-    if [[ "${LIBEV_FORCE_BUILD:-0}" == "1" ]]; then
-        build_shadowsocks_libev
-        return 0
+    if [[ -z "${PREBUILT_BIN_DIR}" || ! -x "${PREBUILT_BIN_DIR}/ss-server" || ! -x "${PREBUILT_BIN_DIR}/ss-manager" ]]; then
+        log_error "On derlenmis binary hazir degil (ic hata)."
+        return 1
     fi
 
-    if [[ -n "${PREBUILT_BIN_DIR}" && -x "${PREBUILT_BIN_DIR}/ss-server" && -x "${PREBUILT_BIN_DIR}/ss-manager" ]]; then
-        install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
-        install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
-        return 0
-    fi
-
-    build_shadowsocks_libev
-}
-
-function build_shadowsocks_libev() {
-    cd "${LIBEV_SRC_DIR}"
-    git submodule update --init --recursive 2>/dev/null || true
-    rm -rf build
-    mkdir build && cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF >/dev/null
-    local -i jobs
-    jobs="$(nproc 2>/dev/null || echo 2)"
-    make -s -j"${jobs}"
-    make -s install
+    install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
+    install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
 }
 
 function install_python_deps() {
@@ -511,13 +519,13 @@ function finish() {
     local -ir code=$?
     if (( code != 0 )); then
         if [[ -s "${LAST_ERROR}" ]]; then
-            log_error "Son hata: $(< "${LAST_ERROR}")"
+            log_error "Son hata:"
+            tail -20 "${LAST_ERROR}" >&2
         fi
         log_error "Kurulum basarisiz. Tam log: ${FULL_LOG}"
     else
-        rm -f "${FULL_LOG}"
+        rm -f "${FULL_LOG}" "${LAST_ERROR}"
     fi
-    rm -f "${LAST_ERROR}"
 }
 
 function parse_args() {
@@ -602,15 +610,11 @@ function main() {
 
     run_step "Bagimliliklar kuruluyor" install_dependencies
     if (( FLAGS_LOCAL == 1 )); then
-        run_step "Yerel kaynak kopyalaniyor" fetch_server_sources
+        run_step "Yerel dosyalar kopyalaniyor" fetch_server_sources
     else
-        run_step "Kaynak kod indiriliyor (${LIBEV_REPO})" fetch_server_sources
+        run_step "Dosyalar indiriliyor" fetch_server_sources
     fi
-    if [[ -n "${PREBUILT_BIN_DIR}" ]]; then
-        run_step "On derlenmis binary kuruluyor (${MACHINE_TYPE})" install_shadowsocks_binaries
-    else
-        run_step "shadowsocks-libev derleniyor" install_shadowsocks_binaries
-    fi
+    run_step "Binary kuruluyor" install_shadowsocks_binaries
     run_step "Python bagimliliklari kuruluyor" install_python_deps
     run_step "API secret uretiliyor" generate_api_secret
     run_step "Yapilandirma yaziliyor" write_configs
