@@ -54,43 +54,51 @@ class LibevManagerClient:
             )
         raise RuntimeError(resp or f"{action} failed")
 
+    def _command(self, action: str, payload: Optional[dict] = None) -> str:
+        """ss-manager protokolu: 'action: {json}' (iki nokta + bosluk zorunlu)."""
+        if payload is None:
+            message = action
+        else:
+            message = f"{action}: {json.dumps(payload, separators=(',', ':'))}"
+        return self._send(message)
+
     def add_port(self, port: int, password: str, method: str = "chacha20-ietf-poly1305") -> None:
         payload = {
             "server_port": port,
             "password": password,
             "method": method,
         }
-        resp = self._send(f"add {json.dumps(payload, separators=(',', ':'))}")
+        resp = self._command("add", payload)
         self._check_response(resp, "add")
 
     def remove_port(self, port: int) -> None:
         payload = {"server_port": port}
-        resp = self._send(f"remove {json.dumps(payload, separators=(',', ':'))}")
+        resp = self._command("remove", payload)
         self._check_response(resp, "remove")
 
     def list_ports(self) -> list:
-        resp = self._send("list")
+        resp = self._command("list")
         if not resp:
             return []
         return json.loads(resp)
 
     def ping(self) -> Dict[str, Any]:
-        resp = self._send("ping")
+        resp = self._command("ping")
         if resp.startswith("stat:"):
             resp = resp.split(":", 1)[1].strip()
         return json.loads(resp or "{}")
 
     def set_ip(self, port: int, ip: str) -> None:
         payload = {"server_port": port, "ip": ip}
-        resp = self._send(f"set_ip {json.dumps(payload, separators=(',', ':'))}")
+        resp = self._command("set_ip", payload)
         self._check_response(resp, "set_ip")
 
     def clear_ip(self, port: int) -> None:
         payload = {"server_port": port}
-        resp = self._send(f"clear_ip {json.dumps(payload, separators=(',', ':'))}")
+        resp = self._command("clear_ip", payload)
         self._check_response(resp, "clear_ip")
 
     def ip_status(self, port: int) -> Dict[str, Any]:
         payload = {"server_port": port}
-        resp = self._send(f"ip_status {json.dumps(payload, separators=(',', ':'))}")
+        resp = self._command("ip_status", payload)
         return json.loads(resp or "{}")
