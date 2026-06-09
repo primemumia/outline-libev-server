@@ -13,7 +13,7 @@ from aiohttp import web
 
 from key_store import DEFAULT_METHOD, KeyManager
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("ss-api")
 
 

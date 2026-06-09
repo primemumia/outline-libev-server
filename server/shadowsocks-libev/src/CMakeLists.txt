@@ -74,6 +74,7 @@ set(SS_SERVER_SOURCE
 set(SS_MANAGER_SOURCE
         ${SS_SHARED_SOURCES}
         manager.c
+        ip_lock.c
         )
 
 set(SS_REDIR_SOURCE

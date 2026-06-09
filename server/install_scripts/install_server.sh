@@ -270,8 +270,11 @@ After=network.target
 [Service]
 Type=simple
 User=root
+RuntimeDirectory=shadowsocks-manager
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/ss-manager -u --executable /usr/local/bin/ss-server --manager-address ${MANAGER_SOCKET} --workdir ${LIBEV_WORKDIR} -s 0.0.0.0 -m chacha20-ietf-poly1305
+StandardOutput=null
+StandardError=journal
 Restart=on-failure
 RestartSec=3
 
@@ -290,6 +293,8 @@ Type=simple
 User=root
 WorkingDirectory=${LIBEV_SS_API_DIR}
 ExecStart=/usr/bin/python3 ${LIBEV_SS_API_DIR}/ss_api.py --host 127.0.0.1 --port ${API_PORT} --manager-address ${MANAGER_SOCKET} --server-ip ${PUBLIC_HOSTNAME} --api-secret ${LIBEV_API_SECRET} --port-store ${LIBEV_WORKDIR}/ports.json
+StandardOutput=null
+StandardError=journal
 Restart=on-failure
 RestartSec=3
 
@@ -548,6 +553,7 @@ function main() {
     run_step "Python bagimliliklari kuruluyor" install_python_deps
     run_step "API secret uretiliyor" generate_api_secret
     run_step "Yapilandirma yaziliyor" write_configs
+    rm -f "${LIBEV_WORKDIR}"/.shadowsocks_*.iplock "${LIBEV_WORKDIR}"/.shadowsocks_*.ipstatus 2>/dev/null || true
     run_step "HTTPS API (nginx) kuruluyor" setup_api_tls
     run_step "Servisler baslatiliyor" start_services
     run_step "API bekleniyor" wait_for_api

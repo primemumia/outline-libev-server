@@ -11,6 +11,11 @@
 #define INET6_ADDRSTRLEN 46
 #endif
 
+#define IP_LOCK_RUNTIME_DIR "/run/shadowsocks-manager"
+
+void ip_lock_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix);
+void ip_lock_ensure_runtime_dir(void);
+
 void ip_lock_init(const char *lock_file, const char *status_file);
 void ip_lock_reload(void);
 const char *ip_lock_get_locked_ip(void);

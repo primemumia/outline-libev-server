@@ -242,13 +242,9 @@ check_ip_lock_allowed(const char *peer_ip)
     }
 
     if (count_connections_for_ip(locked) > 0) {
-        LOGE("IP lock denied on port %s: active client %s, rejected %s",
-             remote_port, locked, peer_ip);
         return 0;
     }
 
-    LOGI("IP lock takeover on port %s: inactive client %s replaced by %s",
-         remote_port, locked, peer_ip);
     ip_lock_set(peer_ip);
     return 1;
 }
@@ -2210,26 +2206,13 @@ main(int argc, char **argv)
     remote_port = server_port;
 
 #ifndef __MINGW32__
-    if (conf_path != NULL && remote_port != NULL) {
+    if (remote_port != NULL) {
         char lock_path[512];
         char status_path[512];
-        size_t path_len = strlen(conf_path);
 
-        strncpy(lock_path, conf_path, sizeof(lock_path) - 1);
-        lock_path[sizeof(lock_path) - 1] = '\0';
-        strncpy(status_path, conf_path, sizeof(status_path) - 1);
-        status_path[sizeof(status_path) - 1] = '\0';
-
-        if (path_len > 5 && strcmp(conf_path + path_len - 5, ".conf") == 0) {
-            strcpy(lock_path + path_len - 5, ".iplock");
-            strcpy(status_path + path_len - 5, ".ipstatus");
-        } else {
-            snprintf(lock_path, sizeof(lock_path), "%s.iplock", conf_path);
-            snprintf(status_path, sizeof(status_path), "%s.ipstatus", conf_path);
-        }
-
+        ip_lock_sidecar_path(lock_path, sizeof(lock_path), remote_port, "iplock");
+        ip_lock_sidecar_path(status_path, sizeof(status_path), remote_port, "ipstatus");
         ip_lock_init(lock_path, status_path);
-        LOGI("IP lock enabled for port %s", remote_port);
     }
 #endif
 

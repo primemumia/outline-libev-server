@@ -60,6 +60,7 @@
 #include "utils.h"
 #include "netutils.h"
 #include "manager.h"
+#include "ip_lock.h"
 
 #ifndef BUF_SIZE
 #define BUF_SIZE 65535
@@ -371,12 +372,6 @@ parse_traffic(char *buf, int len, char *port, uint64_t *traffic)
     return 0;
 }
 
-static void
-get_port_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix)
-{
-    snprintf(out, out_size, "%s/.shadowsocks_%s.%s", working_dir, port, suffix);
-}
-
 static int
 write_port_lock_ip(const char *port, const char *ip)
 {
@@ -386,10 +381,9 @@ write_port_lock_ip(const char *port, const char *ip)
         return -1;
     }
 
-    get_port_sidecar_path(path, sizeof(path), port, "iplock");
+    ip_lock_sidecar_path(path, sizeof(path), port, "iplock");
     FILE *f = fopen(path, "w");
     if (f == NULL) {
-        LOGE("write_port_lock_ip: unable to open %s", path);
         return -1;
     }
     fprintf(f, "%s\n", ip);
@@ -406,7 +400,7 @@ clear_port_lock_ip(const char *port)
         return -1;
     }
 
-    get_port_sidecar_path(path, sizeof(path), port, "iplock");
+    ip_lock_sidecar_path(path, sizeof(path), port, "iplock");
     unlink(path);
     return 0;
 }
@@ -469,8 +463,8 @@ read_port_status(const char *port, char *out, size_t out_size)
     char status_body[512]            = { 0 };
     FILE *f;
 
-    get_port_sidecar_path(lock_path, sizeof(lock_path), port, "iplock");
-    get_port_sidecar_path(status_path, sizeof(status_path), port, "ipstatus");
+    ip_lock_sidecar_path(lock_path, sizeof(lock_path), port, "iplock");
+    ip_lock_sidecar_path(status_path, sizeof(status_path), port, "ipstatus");
 
     f = fopen(lock_path, "r");
     if (f != NULL) {
@@ -706,8 +700,8 @@ remove_server(char *prefix, char *port)
         ss_free(old_server);
     }
 
-    snprintf(lock_path, sizeof(lock_path), "%s/.shadowsocks_%s.iplock", prefix, port);
-    snprintf(status_path, sizeof(status_path), "%s/.shadowsocks_%s.ipstatus", prefix, port);
+    ip_lock_sidecar_path(lock_path, sizeof(lock_path), port, "iplock");
+    ip_lock_sidecar_path(status_path, sizeof(status_path), port, "ipstatus");
     unlink(lock_path);
     unlink(status_path);
 
@@ -1339,6 +1333,8 @@ main(int argc, char **argv)
         ss_free(working_dir);
         FATAL("unable to create working directory");
     }
+
+    ip_lock_ensure_runtime_dir();
 
     if (manager_address == NULL) {
         size_t manager_address_size = strlen(workdir) + 20;

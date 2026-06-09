@@ -5,8 +5,10 @@ WIN_SRC="/mnt/c/Users/prime/Desktop/test out/server/shadowsocks-libev"
 WSL_SRC="$HOME/ss-libev-build"
 
 cp -a "$WIN_SRC/src/ip_lock.c" "$WIN_SRC/src/ip_lock.h" "$WIN_SRC/src/server.h" "$WIN_SRC/src/server.c" "$WIN_SRC/src/manager.c" "$WIN_SRC/src/manager.h" "$WSL_SRC/src/"
+cp -a "$WIN_SRC/src/CMakeLists.txt" "$WSL_SRC/src/CMakeLists.txt"
 
 cd "$WSL_SRC/build"
+cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF
 make -j4 ss-server-shared ss-manager-shared
 
 mkdir -p "/mnt/c/Users/prime/Desktop/test out/server/bin/x86_64"

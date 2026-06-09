@@ -22,8 +22,21 @@ static char locked_ip[INET6_ADDRSTRLEN];
 static time_t lock_file_mtime = 0;
 
 void
+ip_lock_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix)
+{
+    snprintf(out, out_size, IP_LOCK_RUNTIME_DIR "/.shadowsocks_%s.%s", port, suffix);
+}
+
+void
+ip_lock_ensure_runtime_dir(void)
+{
+    mkdir(IP_LOCK_RUNTIME_DIR, S_IRWXU);
+}
+
+void
 ip_lock_init(const char *lock_file, const char *status_file)
 {
+    ip_lock_ensure_runtime_dir();
     if (lock_file != NULL) {
         strncpy(lock_file_path, lock_file, sizeof(lock_file_path) - 1);
         lock_file_path[sizeof(lock_file_path) - 1] = '\0';
@@ -96,7 +109,6 @@ ip_lock_set(const char *ip)
 
     FILE *f = fopen(lock_file_path, "w");
     if (f == NULL) {
-        LOGE("ip_lock_set: unable to write %s", lock_file_path);
         return;
     }
     fprintf(f, "%s\n", locked_ip);

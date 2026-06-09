@@ -20,3 +20,6 @@ Zorla kaynak derleme (sunucuda):
 export LIBEV_FORCE_BUILD=1
 sudo bash install_server.sh
 ```
+
+Canli port durumu `/run/shadowsocks-manager/` altinda tutulur (RAM/tmpfs, reboot sonrasi silinir).
+Journal/syslog'a IP veya baglanti bilgisi yazilmaz; sadece `libev status port N` ile gorulur.
