@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""UDP client for shadowsocks-libev ss-manager."""
+"""UDP/Unix client for shadowsocks-libev ss-manager."""
 
 import json
+import os
 import socket
 from typing import Any, Dict, Optional
 
@@ -24,12 +25,10 @@ class LibevManagerClient:
 
     def _send(self, command: str) -> str:
         if self._port is None:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-            target = self._host
-        else:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            target = (self._host, self._port)
+            return self._send_unix(command, self._host)
 
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        target = (self._host, self._port)
         sock.settimeout(self.timeout)
         try:
             sock.sendto(command.encode("utf-8"), target)
@@ -42,6 +41,28 @@ class LibevManagerClient:
             ) from exc
         finally:
             sock.close()
+
+    def _send_unix(self, command: str, target: str) -> str:
+        """Unix DGRAM: istemci bind etmezse ss-manager yanit gonderemez."""
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        client_path = f"/tmp/libev-cli-{os.getpid()}.sock"
+        sock.settimeout(self.timeout)
+        try:
+            if os.path.exists(client_path):
+                os.unlink(client_path)
+            sock.bind(client_path)
+            sock.sendto(command.encode("utf-8"), target)
+            data, _ = sock.recvfrom(65535)
+            return data.decode("utf-8", errors="replace").strip("\x00")
+        except socket.timeout as exc:
+            raise RuntimeError(
+                f"ss-manager yanit vermedi ({self.manager_address}). "
+                f"Kontrol: systemctl status shadowsocks-manager"
+            ) from exc
+        finally:
+            sock.close()
+            if os.path.exists(client_path):
+                os.unlink(client_path)
 
     @staticmethod
     def _check_response(resp: str, action: str) -> None:
