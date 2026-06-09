@@ -27,6 +27,14 @@
 
 set -euo pipefail
 
+export DEBIAN_FRONTEND=noninteractive
+export APT_LISTCHANGES_FRONTEND=none
+export NEEDRESTART_MODE=a
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_INPUT=1
+export PIP_PROGRESS_BAR=off
+export GIT_TERMINAL_PROMPT=0
+
 readonly LIBEV_REPO="${LIBEV_REPO:-primemumia/outline-libev-server}"
 readonly LIBEV_BRANCH="${LIBEV_BRANCH:-main}"
 readonly LIBEV_INSTALL_DIR="${LIBEV_INSTALL_DIR:-/opt/libev-server}"
@@ -97,7 +105,30 @@ function log_start_step() {
 }
 
 function log_command() {
-    "$@" >> "${FULL_LOG}" 2>> "${LAST_ERROR}"
+    ( "$@" ) >> "${FULL_LOG}" 2>> "${LAST_ERROR}" </dev/null
+}
+
+function apt_update() {
+    apt-get update -qq </dev/null
+}
+
+function apt_install() {
+    apt-get install -qq -y \
+        -o Dpkg::Use-Pty=0 \
+        -o Dpkg::Progress-Fancy=0 \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        "$@" </dev/null
+}
+
+function pip_install_quiet() {
+    if pip3 install -q --disable-pip-version-check --no-warn-script-location \
+        -r "${LIBEV_SS_API_DIR}/requirements.txt" </dev/null 2>&1; then
+        return 0
+    fi
+    pip3 install -q --disable-pip-version-check --no-warn-script-location \
+        --break-system-packages -r "${LIBEV_SS_API_DIR}/requirements.txt" </dev/null 2>&1 || \
+        apt_install python3-aiohttp
 }
 
 function run_step() {
@@ -158,9 +189,8 @@ function detect_public_ip() {
 }
 
 function install_dependencies() {
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y \
+    apt_update
+    apt_install \
         build-essential cmake git autoconf libtool pkg-config \
         libev-dev libpcre2-dev libmbedtls-dev libsodium-dev libc-ares-dev \
         libcap2-bin libsystemd-dev python3 python3-pip curl ca-certificates \
@@ -209,7 +239,7 @@ function fetch_server_sources() {
     clone_dir="$(mktemp -d /tmp/libev-src.XXXXXX)"
     local repo_url="https://github.com/${LIBEV_REPO}.git"
 
-    git clone --depth 1 --branch "${LIBEV_BRANCH}" --recurse-submodules "${repo_url}" "${clone_dir}"
+    git clone -q --depth 1 --branch "${LIBEV_BRANCH}" --recurse-submodules "${repo_url}" "${clone_dir}"
 
     if [[ ! -d "${clone_dir}/server/shadowsocks-libev" ]]; then
         log_error "Repo yapisi hatali: server/shadowsocks-libev bulunamadi (${LIBEV_REPO})"
@@ -246,18 +276,15 @@ function build_shadowsocks_libev() {
     git submodule update --init --recursive 2>/dev/null || true
     rm -rf build
     mkdir build && cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF >/dev/null
     local -i jobs
     jobs="$(nproc 2>/dev/null || echo 2)"
-    make -j"${jobs}"
-    make install
+    make -s -j"${jobs}"
+    make -s install
 }
 
 function install_python_deps() {
-    if ! pip3 install -r "${LIBEV_SS_API_DIR}/requirements.txt" 2>/dev/null; then
-        pip3 install --break-system-packages -r "${LIBEV_SS_API_DIR}/requirements.txt" 2>/dev/null || \
-            apt-get install -y python3-aiohttp
-    fi
+    pip_install_quiet
     chmod +x "${LIBEV_SS_API_DIR}/libev" "${LIBEV_SS_API_DIR}/libev-cli.py"
     local uninstall_src=""
     if [[ -f "${LIBEV_SS_API_DIR}/../install_scripts/uninstall_server.sh" ]]; then
@@ -369,9 +396,9 @@ EOF
 
     ln -sf /etc/nginx/sites-available/libev-api /etc/nginx/sites-enabled/libev-api
     rm -f /etc/nginx/sites-enabled/default
-    nginx -t
-    systemctl enable nginx
-    systemctl restart nginx
+    nginx -t >/dev/null 2>&1
+    systemctl enable nginx >/dev/null 2>&1
+    systemctl restart nginx >/dev/null 2>&1
 }
 
 function start_services() {
@@ -543,10 +570,12 @@ function main() {
     readonly MACHINE_TYPE
 
     if ! command_exists curl; then
-        apt-get update -qq && apt-get install -y curl ca-certificates
+        apt_update
+        apt_install curl ca-certificates
     fi
     if ! command_exists git; then
-        apt-get update -qq && apt-get install -y git
+        apt_update
+        apt_install git
     fi
 
     API_PORT="${FLAGS_API_PORT}"
