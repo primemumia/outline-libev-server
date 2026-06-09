@@ -180,6 +180,15 @@ class KeyManager:
             "empty": "BOS",
         }.get(state, state)
 
+    @staticmethod
+    def _parse_ip_list(raw: Any, key: str) -> List[str]:
+        value = raw.get(key)
+        if isinstance(value, list):
+            return [str(x) for x in value if x]
+        if isinstance(value, dict):
+            return list(value.keys())
+        return []
+
     def port_status(self, port: int) -> Dict[str, Any]:
         port = int(port)
         found = self.find_by_port(port)
@@ -188,15 +197,17 @@ class KeyManager:
             try:
                 raw = json.loads(raw or "{}")
             except json.JSONDecodeError:
-                raw = {"locked_ip": "", "connections": 0, "active_ips": []}
+                raw = {
+                    "locked_ip": "",
+                    "connections": 0,
+                    "active_ips": [],
+                    "recent_incoming": [],
+                    "blocked_ips": [],
+                }
         state = self.derive_port_state(raw)
-        active_raw = raw.get("active_ips")
-        if isinstance(active_raw, list):
-            active_list = [str(x) for x in active_raw if x]
-        elif isinstance(active_raw, dict):
-            active_list = list(active_raw.keys())
-        else:
-            active_list = []
+        active_list = self._parse_ip_list(raw, "active_ips")
+        incoming_list = self._parse_ip_list(raw, "recent_incoming")
+        blocked_list = self._parse_ip_list(raw, "blocked_ips")
         return {
             "port": port,
             "name": found[1].get("name") if found else None,
@@ -204,6 +215,8 @@ class KeyManager:
             "locked_ip": (raw.get("locked_ip") or "") or None,
             "connections": int(raw.get("connections") or 0),
             "active_ips": active_list,
+            "recent_incoming": incoming_list,
+            "blocked_ips": blocked_list,
             "state": state,
             "state_label": self.state_label(state),
             "assigned": found is not None,

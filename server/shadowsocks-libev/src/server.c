@@ -1847,7 +1847,14 @@ accept_cb(EV_P_ ev_io *w, int revents)
                 return;
             }
         }
+        if (ip_lock_is_enabled()) {
+            ip_lock_record_incoming(peer_name);
+        }
         if (!check_ip_lock_allowed(peer_name)) {
+            if (ip_lock_is_enabled()) {
+                ip_lock_record_blocked(peer_name);
+                update_ip_lock_status();
+            }
             close(serverfd);
             return;
         }

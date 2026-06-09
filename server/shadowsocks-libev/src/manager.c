@@ -489,7 +489,8 @@ read_port_status(const char *port, char *out, size_t out_size)
     }
 
     snprintf(out, out_size,
-             "{\"locked_ip\":\"%s\",\"connections\":0,\"active_ips\":[]}",
+             "{\"locked_ip\":\"%s\",\"connections\":0,\"active_ips\":[],"
+             "\"recent_incoming\":[],\"blocked_ips\":[]}",
              locked_ip);
     return 0;
 }

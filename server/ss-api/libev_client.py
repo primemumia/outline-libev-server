@@ -125,4 +125,5 @@ class LibevManagerClient:
         try:
             return json.loads(resp or "{}")
         except json.JSONDecodeError:
-            return {"locked_ip": "", "connections": 0, "active_ips": []}
+            return {"locked_ip": "", "connections": 0, "active_ips": [],
+                    "recent_incoming": [], "blocked_ips": []}

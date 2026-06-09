@@ -73,6 +73,15 @@ def print_json(data) -> None:
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def print_ip_list(title: str, ips: list) -> None:
+    if ips:
+        print(f"{title}:")
+        for ip in ips:
+            print(f"  - {ip}")
+    else:
+        print(f"{title:<12}: yok")
+
+
 def print_port_status(info: dict) -> None:
     name = info.get("name") or "(atanmamis)"
     print(f"Port        : {info['port']}")
@@ -80,13 +89,9 @@ def print_port_status(info: dict) -> None:
     print(f"Durum       : {info['state_label']}")
     print(f"Kilitli IP  : {info.get('locked_ip') or '-'}")
     print(f"Baglanti    : {info.get('connections', 0)}")
-    active = info.get("active_ips") or []
-    if active:
-        print("Aktif IP'ler:")
-        for ip in active:
-            print(f"  - {ip}")
-    else:
-        print("Aktif IP    : yok")
+    print_ip_list("Aktif IP'ler", info.get("active_ips") or [])
+    print_ip_list("Gelen IP'ler", info.get("recent_incoming") or [])
+    print_ip_list("Engellenen IP'ler", info.get("blocked_ips") or [])
     if info["state"] == "zombie":
         print("Not         : Kilit kayitli ama canli oturum yok; yeni IP devralabilir.")
     elif info["state"] == "empty":
@@ -204,10 +209,13 @@ def main(argv=None) -> int:
                 return 0
             for info in items:
                 active = ", ".join(info.get("active_ips") or []) or "-"
+                incoming = ", ".join(info.get("recent_incoming") or []) or "-"
+                blocked = ", ".join(info.get("blocked_ips") or []) or "-"
                 locked = info.get("locked_ip") or "-"
                 print(
                     f"port {info['port']:>4}  {info['name'] or '-':<12}  "
-                    f"{info['state_label']:<28}  kilit={locked}  aktif={active}"
+                    f"{info['state_label']:<28}  kilit={locked}  "
+                    f"aktif={active}  gelen={incoming}  engel={blocked}"
                 )
             return 0
 
