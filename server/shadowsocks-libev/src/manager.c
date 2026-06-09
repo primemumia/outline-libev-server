@@ -460,7 +460,7 @@ read_port_status(const char *port, char *out, size_t out_size)
     char lock_path[512];
     char status_path[512];
     char locked_ip[INET6_ADDRSTRLEN] = { 0 };
-    char status_body[512]            = { 0 };
+    char status_body[IP_LOCK_STATUS_JSON_MAX + 64];
     FILE *f;
 
     ip_lock_sidecar_path(lock_path, sizeof(lock_path), port, "iplock");
@@ -489,7 +489,7 @@ read_port_status(const char *port, char *out, size_t out_size)
     }
 
     snprintf(out, out_size,
-             "{\"locked_ip\":\"%s\",\"connections\":0,\"active_ips\":{}}",
+             "{\"locked_ip\":\"%s\",\"connections\":0,\"active_ips\":[]}",
              locked_ip);
     return 0;
 }
@@ -930,7 +930,7 @@ manager_recv_cb(EV_P_ ev_io *w, int revents)
         }
     } else if (strcmp(action, "ip_status") == 0) {
         char port[8];
-        char status[512];
+        char status[IP_LOCK_STATUS_JSON_MAX + 128];
 
         if (parse_port_only(buf, r, port) == -1) {
             LOGE("invalid ip_status command: %s", buf);

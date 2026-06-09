@@ -137,8 +137,73 @@ ip_lock_clear(void)
 }
 
 void
+ip_lock_format_active_ips(const char *const *ips, int ip_count,
+                          char *out, size_t out_size)
+{
+    int pos = 0;
+    int i;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    if (ips == NULL || ip_count <= 0) {
+        snprintf(out, out_size, "[]");
+        return;
+    }
+
+    pos += snprintf(out + pos, out_size - pos, "[");
+    for (i = 0; i < ip_count; i++) {
+        int n;
+        if (ips[i] == NULL || ips[i][0] == '\0') {
+            continue;
+        }
+        if (pos > 1 && pos < (int)out_size - 1) {
+            pos += snprintf(out + pos, out_size - pos, ",");
+        }
+        if (pos >= (int)out_size - 2) {
+            break;
+        }
+        n = snprintf(out + pos, out_size - pos, "\"%s\"", ips[i]);
+        if (n < 0 || pos + n >= (int)out_size - 2) {
+            break;
+        }
+        pos += n;
+    }
+    snprintf(out + pos, out_size - pos, "]");
+}
+
+static void
+ip_lock_json_escape(const char *in, char *out, size_t out_size)
+{
+    size_t pos = 0;
+
+    if (out == NULL || out_size == 0) {
+        return;
+    }
+
+    if (in == NULL) {
+        out[0] = '\0';
+        return;
+    }
+
+    for (; *in != '\0' && pos + 1 < out_size; in++) {
+        if (*in == '"' || *in == '\\') {
+            if (pos + 2 >= out_size) {
+                break;
+            }
+            out[pos++] = '\\';
+        }
+        out[pos++] = *in;
+    }
+    out[pos] = '\0';
+}
+
+void
 ip_lock_write_status(int total_conn, const char *active_ips_json)
 {
+    char locked_esc[INET6_ADDRSTRLEN * 2];
+
     if (status_file_path[0] == '\0') {
         return;
     }
@@ -149,12 +214,14 @@ ip_lock_write_status(int total_conn, const char *active_ips_json)
     }
 
     if (active_ips_json == NULL) {
-        active_ips_json = "{}";
+        active_ips_json = "[]";
     }
+
+    ip_lock_json_escape(locked_ip, locked_esc, sizeof(locked_esc));
 
     fprintf(f,
             "{\"locked_ip\":\"%s\",\"connections\":%d,\"active_ips\":%s}\n",
-            locked_ip, total_conn, active_ips_json);
+            locked_esc, total_conn, active_ips_json);
     fclose(f);
 }
 

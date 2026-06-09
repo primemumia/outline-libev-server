@@ -185,18 +185,25 @@ class KeyManager:
         found = self.find_by_port(port)
         raw = self.client.ip_status(port)
         if isinstance(raw, str):
-            raw = json.loads(raw or "{}")
+            try:
+                raw = json.loads(raw or "{}")
+            except json.JSONDecodeError:
+                raw = {"locked_ip": "", "connections": 0, "active_ips": []}
         state = self.derive_port_state(raw)
-        active_ips = raw.get("active_ips") or {}
-        if not isinstance(active_ips, dict):
-            active_ips = {}
+        active_raw = raw.get("active_ips")
+        if isinstance(active_raw, list):
+            active_list = [str(x) for x in active_raw if x]
+        elif isinstance(active_raw, dict):
+            active_list = list(active_raw.keys())
+        else:
+            active_list = []
         return {
             "port": port,
             "name": found[1].get("name") if found else None,
             "method": found[1].get("method", DEFAULT_METHOD) if found else DEFAULT_METHOD,
             "locked_ip": (raw.get("locked_ip") or "") or None,
             "connections": int(raw.get("connections") or 0),
-            "active_ips": list(active_ips.keys()),
+            "active_ips": active_list,
             "state": state,
             "state_label": self.state_label(state),
             "assigned": found is not None,

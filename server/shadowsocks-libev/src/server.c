@@ -193,12 +193,11 @@ static void
 update_ip_lock_status(void)
 {
     struct cork_dllist_item *curr, *next;
-    char active_buf[512];
-    char entry[64];
-    int total = 0;
-    int pos   = 0;
-
-    pos += snprintf(active_buf + pos, sizeof(active_buf) - pos, "{");
+    const char *unique_ips[IP_LOCK_MAX_TRACK_IPS];
+    char active_buf[IP_LOCK_STATUS_JSON_MAX];
+    int unique_count = 0;
+    int total        = 0;
+    int i;
 
     cork_dllist_foreach_void(&connections, curr, next) {
         server_t *server = cork_container_of(curr, server_t, entries);
@@ -206,17 +205,17 @@ update_ip_lock_status(void)
             continue;
         }
         total++;
-        if (pos > 1) {
-            pos += snprintf(active_buf + pos, sizeof(active_buf) - pos, ",");
+        for (i = 0; i < unique_count; i++) {
+            if (strcmp(unique_ips[i], server->peer_ip) == 0) {
+                break;
+            }
         }
-        snprintf(entry, sizeof(entry), "\"%s\":1", server->peer_ip);
-        pos += snprintf(active_buf + pos, sizeof(active_buf) - pos, "%s", entry);
-        if (pos >= (int)sizeof(active_buf) - 4) {
-            break;
+        if (i == unique_count && unique_count < IP_LOCK_MAX_TRACK_IPS) {
+            unique_ips[unique_count++] = server->peer_ip;
         }
     }
 
-    snprintf(active_buf + pos, sizeof(active_buf) - pos, "}");
+    ip_lock_format_active_ips(unique_ips, unique_count, active_buf, sizeof(active_buf));
     ip_lock_write_status(total, active_buf);
 }
 

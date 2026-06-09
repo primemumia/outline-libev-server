@@ -122,4 +122,7 @@ class LibevManagerClient:
     def ip_status(self, port: int) -> Dict[str, Any]:
         payload = {"server_port": port}
         resp = self._command("ip_status", payload)
-        return json.loads(resp or "{}")
+        try:
+            return json.loads(resp or "{}")
+        except json.JSONDecodeError:
+            return {"locked_ip": "", "connections": 0, "active_ips": []}
