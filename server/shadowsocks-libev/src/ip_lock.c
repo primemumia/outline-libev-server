@@ -178,9 +178,9 @@ ip_lock_configure_client_socket(int fd)
 
     setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
 
-    int keepidle  = 30;
-    int keepintvl = 10;
-    int keepcnt   = 3;
+    int keepidle  = IP_LOCK_KEEPIDLE_SEC;
+    int keepintvl = IP_LOCK_KEEPINTVL_SEC;
+    int keepcnt   = IP_LOCK_KEEPCNT;
 #ifdef TCP_KEEPIDLE
     setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
 #endif
@@ -192,7 +192,7 @@ ip_lock_configure_client_socket(int fd)
 #endif
 #ifdef TCP_USER_TIMEOUT
     {
-        unsigned int user_timeout = 45000;
+        unsigned int user_timeout = IP_LOCK_USER_TIMEOUT_MS;
         setsockopt(fd, SOL_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout));
     }
 #endif
