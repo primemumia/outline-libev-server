@@ -127,7 +127,9 @@ class SSApiServer:
     async def handle_port_status(self, request: web.Request) -> web.Response:
         await self._require_auth(request)
         port = int(request.match_info["key_id"])
-        status = self.keys.client.ip_status(port)
+        if str(port) not in self.ports:
+            raise web.HTTPNotFound()
+        status = self.keys.port_status(port)
         return web.json_response(status)
 
     async def handle_server_info(self, request: web.Request) -> web.Response:
