@@ -156,13 +156,65 @@ class KeyManager:
             items.append(self.key_payload(int(port_str), self.ports[port_str]))
         return items
 
+    def find_by_port(self, port: int) -> Optional[Tuple[int, Dict[str, Any]]]:
+        entry = self.ports.get(str(int(port)))
+        if entry is None:
+            return None
+        return int(port), entry
+
+    @staticmethod
+    def derive_port_state(status: Dict[str, Any]) -> str:
+        locked = (status.get("locked_ip") or "").strip()
+        connections = int(status.get("connections") or 0)
+        if connections > 0:
+            return "active"
+        if locked:
+            return "zombie"
+        return "empty"
+
+    @staticmethod
+    def state_label(state: str) -> str:
+        return {
+            "active": "AKTIF",
+            "zombie": "ZOMBIE (kilitli, baglanti yok)",
+            "empty": "BOS",
+        }.get(state, state)
+
+    def port_status(self, port: int) -> Dict[str, Any]:
+        port = int(port)
+        found = self.find_by_port(port)
+        raw = self.client.ip_status(port)
+        if isinstance(raw, str):
+            raw = json.loads(raw or "{}")
+        state = self.derive_port_state(raw)
+        active_ips = raw.get("active_ips") or {}
+        if not isinstance(active_ips, dict):
+            active_ips = {}
+        return {
+            "port": port,
+            "name": found[1].get("name") if found else None,
+            "method": found[1].get("method", DEFAULT_METHOD) if found else DEFAULT_METHOD,
+            "locked_ip": (raw.get("locked_ip") or "") or None,
+            "connections": int(raw.get("connections") or 0),
+            "active_ips": list(active_ips.keys()),
+            "state": state,
+            "state_label": self.state_label(state),
+            "assigned": found is not None,
+        }
+
+    def all_port_statuses(self) -> List[Dict[str, Any]]:
+        items = []
+        for port_str in sorted(self.ports.keys(), key=lambda x: int(x)):
+            items.append(self.port_status(int(port_str)))
+        return items
+
     def show_key(self, name: str) -> Dict[str, Any]:
         found = self.find_by_name(name)
         if not found:
             raise ValueError(f"Anahtar bulunamadı: {name}")
         port, entry = found
         payload = self.key_payload(port, entry)
-        payload["status"] = self.client.ip_status(port)
+        payload["status"] = self.port_status(port)
         return payload
 
     def set_lock_ip(self, name: str, ip: str) -> Dict[str, Any]:

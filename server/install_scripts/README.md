@@ -38,7 +38,8 @@ Binary yoksa veya `LIBEV_FORCE_BUILD=1` ise kaynaktan derler.
 | Management API | `http://127.0.0.1:8087/{secret}` |
 | Access config | `/opt/libev-server/access.txt` |
 | CLI | `libev add key isim` |
-| ss-manager | UDP `127.0.0.1:6001` |
+| Port izleme | `libev status port 444` / `libev status ports` |
+| ss-manager | Unix socket ` /var/lib/shadowsocks-manager/manager.sock` |
 | Port havuzu | 444–999 |
 
 ## Bot entegrasyonu

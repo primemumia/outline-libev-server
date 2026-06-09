@@ -430,6 +430,10 @@ Manuel anahtar komutlari:
   libev add key mumia
   libev del key mumia
   libev list keys
+  libev list keys --live
+  libev status port 444
+  libev status ports
+  libev show key mumia
 
 Ilk anahtar (default):
 ${FIRST_KEY_JSON}
