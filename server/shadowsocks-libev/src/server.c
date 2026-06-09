@@ -1707,7 +1707,12 @@ new_server(int fd, listen_ctx_t *listener)
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
 
-    int timeout = max(MIN_TCP_IDLE_TIMEOUT, server->listen_ctx->timeout);
+    int timeout;
+    if (ip_lock_is_enabled()) {
+        timeout = ip_lock_idle_timeout();
+    } else {
+        timeout = max(MIN_TCP_IDLE_TIMEOUT, server->listen_ctx->timeout);
+    }
     ev_io_init(&server->recv_ctx->io, server_recv_cb, fd, EV_READ);
     ev_io_init(&server->send_ctx->io, server_send_cb, fd, EV_WRITE);
     ev_timer_init(&server->recv_ctx->watcher, server_timeout_cb,
@@ -1862,6 +1867,10 @@ accept_cb(EV_P_ ev_io *w, int revents)
 
     if (tcp_incoming_rcvbuf > 0) {
         setsockopt(serverfd, SOL_SOCKET, SO_RCVBUF, &tcp_incoming_rcvbuf, sizeof(int));
+    }
+
+    if (ip_lock_is_enabled()) {
+        ip_lock_configure_client_socket(serverfd);
     }
 
     setnonblocking(serverfd);

@@ -83,6 +83,8 @@ def print_port_status(info: dict) -> None:
         print("Not         : Kilit kayitli ama canli oturum yok; yeni IP devralabilir.")
     elif info["state"] == "empty":
         print("Not         : Port bos; ilk baglanan IP otomatik kilitlenir.")
+    elif info["state"] == "active":
+        print("Not         : Kopuk oturum ~60 sn icinde temizlenir (WiFi/mobil kapali).")
 
 
 def main(argv=None) -> int:

@@ -12,9 +12,13 @@
 #endif
 
 #define IP_LOCK_RUNTIME_DIR "/run/shadowsocks-manager"
+#define IP_LOCK_IDLE_TIMEOUT_SEC 120
 
 void ip_lock_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix);
 void ip_lock_ensure_runtime_dir(void);
+int ip_lock_is_enabled(void);
+int ip_lock_idle_timeout(void);
+void ip_lock_configure_client_socket(int fd);
 
 void ip_lock_init(const char *lock_file, const char *status_file);
 void ip_lock_reload(void);

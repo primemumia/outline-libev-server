@@ -12,14 +12,18 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifndef __MINGW32__
+#include <netinet/tcp.h>
+#endif
+
 #include "ip_lock.h"
 #include "utils.h"
-#include "netutils.h"
 
 static char lock_file_path[512];
 static char status_file_path[512];
 static char locked_ip[INET6_ADDRSTRLEN];
 static time_t lock_file_mtime = 0;
+static int ip_lock_enabled     = 0;
 
 void
 ip_lock_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix)
@@ -36,6 +40,7 @@ ip_lock_ensure_runtime_dir(void)
 void
 ip_lock_init(const char *lock_file, const char *status_file)
 {
+    ip_lock_enabled = 1;
     ip_lock_ensure_runtime_dir();
     if (lock_file != NULL) {
         strncpy(lock_file_path, lock_file, sizeof(lock_file_path) - 1);
@@ -151,4 +156,47 @@ ip_lock_write_status(int total_conn, const char *active_ips_json)
             "{\"locked_ip\":\"%s\",\"connections\":%d,\"active_ips\":%s}\n",
             locked_ip, total_conn, active_ips_json);
     fclose(f);
+}
+
+int
+ip_lock_is_enabled(void)
+{
+    return ip_lock_enabled;
+}
+
+int
+ip_lock_idle_timeout(void)
+{
+    return IP_LOCK_IDLE_TIMEOUT_SEC;
+}
+
+void
+ip_lock_configure_client_socket(int fd)
+{
+#ifndef __MINGW32__
+    int on = 1;
+
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+
+    int keepidle  = 30;
+    int keepintvl = 10;
+    int keepcnt   = 3;
+#ifdef TCP_KEEPIDLE
+    setsockopt(fd, SOL_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+#endif
+#ifdef TCP_KEEPINTVL
+    setsockopt(fd, SOL_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+#endif
+#ifdef TCP_KEEPCNT
+    setsockopt(fd, SOL_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#endif
+#ifdef TCP_USER_TIMEOUT
+    {
+        unsigned int user_timeout = 45000;
+        setsockopt(fd, SOL_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout));
+    }
+#endif
+#else
+    (void)fd;
+#endif
 }
