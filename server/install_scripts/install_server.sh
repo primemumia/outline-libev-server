@@ -49,6 +49,27 @@ PREBUILT_BIN_DIR=""
 FULL_LOG="$(mktemp -t libev_install_logXXXXXX)"
 LAST_ERROR="$(mktemp -t libev_install_errXXXXXX)"
 readonly FULL_LOG LAST_ERROR
+readonly STEP_LINE_WIDTH=47
+
+function print_step_line() {
+    local msg="$1"
+    local status="$2"
+    local prefix="> ${msg}"
+    local -i dots=$(( STEP_LINE_WIDTH - ${#prefix} - ${#status} - 1 ))
+    if (( dots < 2 )); then
+        dots=2
+    fi
+    local dotstr=""
+    local _i
+    for ((_i = 0; _i < dots; _i++)); do
+        dotstr+="."
+    done
+    if [[ "${status}" == "WAITING" ]]; then
+        printf '\r%s %s %s' "${prefix}" "${dotstr}" "${status}"
+    else
+        printf '\r%s %s %s\n' "${prefix}" "${dotstr}" "${status}"
+    fi
+}
 
 function display_usage() {
     cat <<'EOF'
@@ -72,28 +93,21 @@ function log_error() {
 }
 
 function log_start_step() {
-    local -r str="> $*"
-    local -ir lineLength=47
-    echo -n "${str}"
-    local -ir numDots=$(( lineLength - ${#str} - 1 ))
-    if (( numDots > 0 )); then
-        echo -n " "
-        for _ in $(seq 1 "${numDots}"); do echo -n .; done
-    fi
-    echo -n " "
+    :
 }
 
 function log_command() {
-    "$@" > >(tee -a "${FULL_LOG}") 2> >(tee -a "${FULL_LOG}" > "${LAST_ERROR}")
+    "$@" >> "${FULL_LOG}" 2>> "${LAST_ERROR}"
 }
 
 function run_step() {
     local -r msg="$1"
-    log_start_step "${msg}"
     shift 1
+    print_step_line "${msg}" "WAITING"
     if log_command "$@"; then
-        echo "OK"
+        print_step_line "${msg}" "OK"
     else
+        print_step_line "${msg}" "FAIL"
         return 1
     fi
 }
@@ -184,6 +198,9 @@ function fetch_server_sources() {
         fi
         rsync -a --delete "${src_root}/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
         rsync -a "${src_root}/ss-api/" "${LIBEV_SS_API_DIR}/"
+        if [[ -f "${src_root}/install_scripts/uninstall_server.sh" ]]; then
+            install -m 755 "${src_root}/install_scripts/uninstall_server.sh" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
+        fi
         try_cache_prebuilt "${src_root}/bin/${MACHINE_TYPE}" || true
         return 0
     fi
@@ -201,6 +218,9 @@ function fetch_server_sources() {
 
     rsync -a --delete "${clone_dir}/server/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
     rsync -a "${clone_dir}/server/ss-api/" "${LIBEV_SS_API_DIR}/"
+    if [[ -f "${clone_dir}/server/install_scripts/uninstall_server.sh" ]]; then
+        install -m 755 "${clone_dir}/server/install_scripts/uninstall_server.sh" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
+    fi
     try_cache_prebuilt "${clone_dir}/server/bin/${MACHINE_TYPE}" || true
 
     rm -rf "${clone_dir}"
@@ -239,6 +259,17 @@ function install_python_deps() {
             apt-get install -y python3-aiohttp
     fi
     chmod +x "${LIBEV_SS_API_DIR}/libev" "${LIBEV_SS_API_DIR}/libev-cli.py"
+    local uninstall_src=""
+    if [[ -f "${LIBEV_SS_API_DIR}/../install_scripts/uninstall_server.sh" ]]; then
+        uninstall_src="${LIBEV_SS_API_DIR}/../install_scripts/uninstall_server.sh"
+    elif [[ -f "/opt/ss-api/uninstall_server.sh" ]]; then
+        uninstall_src="/opt/ss-api/uninstall_server.sh"
+    fi
+    if [[ -f "${LIBEV_SS_API_DIR}/uninstall_server.sh" ]]; then
+        chmod +x "${LIBEV_SS_API_DIR}/uninstall_server.sh"
+    elif [[ -n "${uninstall_src}" ]]; then
+        install -m 755 "${uninstall_src}" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
+    fi
     cat > /usr/local/bin/libev <<EOF
 #!/bin/bash
 exec python3 ${LIBEV_SS_API_DIR}/libev-cli.py "\$@"
@@ -439,6 +470,7 @@ Manuel anahtar komutlari:
   libev status port 444
   libev status ports
   libev show key mumia
+  libev server delete --yes
 
 Ilk anahtar (default):
 ${FIRST_KEY_JSON}

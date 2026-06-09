@@ -39,6 +39,7 @@ Binary yoksa veya `LIBEV_FORCE_BUILD=1` ise kaynaktan derler.
 | Access config | `/opt/libev-server/access.txt` |
 | CLI | `libev add key isim` |
 | Port izleme | `libev status port 444` (canli; journal/loga yazilmaz) |
+| Kaldirma | `sudo libev server delete --yes` |
 | ss-manager | Unix socket ` /var/lib/shadowsocks-manager/manager.sock` |
 | Port havuzu | 444–999 |
 

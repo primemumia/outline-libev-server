@@ -4,12 +4,15 @@
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 from key_store import KeyManager
 
 DEFAULT_CONFIG = "/etc/libev/cli.json"
+UNINSTALL_SCRIPT = Path("/opt/ss-api/uninstall_server.sh")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +21,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="JSON çıktı (status/show)")
 
     sub = parser.add_subparsers(dest="command", required=True)
+
+    server = sub.add_parser("server", help="Sunucu kurulumu yonetimi")
+    server_sub = server.add_subparsers(dest="server_target", required=True)
+    server_del = server_sub.add_parser("delete", help="Tum libev kurulumunu kaldir")
+    server_del.add_argument("-y", "--yes", action="store_true", help="Onay (zorunlu)")
 
     add = sub.add_parser("add", help="Anahtar ekle")
     add_sub = add.add_subparsers(dest="add_target", required=True)
@@ -87,9 +95,38 @@ def print_port_status(info: dict) -> None:
         print("Not         : Kopuk oturum ~60 sn icinde temizlenir (WiFi/mobil kapali).")
 
 
+def run_server_delete(yes: bool) -> int:
+    if os.geteuid() != 0:
+        print("❌ Root gerekli: sudo libev server delete --yes", file=sys.stderr)
+        return 1
+    if not yes:
+        print("❌ Onay gerekli: libev server delete --yes", file=sys.stderr)
+        print("   Tum servisler, anahtarlar ve API kaldirilir.", file=sys.stderr)
+        return 1
+
+    script = UNINSTALL_SCRIPT
+    if not script.is_file():
+        fallback = Path(__file__).resolve().parent / "uninstall_server.sh"
+        if fallback.is_file():
+            script = fallback
+        else:
+            print(f"❌ Kaldirma scripti bulunamadi: {UNINSTALL_SCRIPT}", file=sys.stderr)
+            return 1
+
+    subprocess.run(["bash", str(script), "--yes"], check=True)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "server" and args.server_target == "delete":
+        try:
+            return run_server_delete(args.yes)
+        except subprocess.CalledProcessError as exc:
+            print(f"❌ Kaldirma basarisiz (cikis {exc.returncode})", file=sys.stderr)
+            return exc.returncode or 1
 
     try:
         manager = KeyManager.from_config(args.config)
