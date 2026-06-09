@@ -235,7 +235,11 @@ function install_python_deps() {
             apt-get install -y python3-aiohttp
     fi
     chmod +x "${LIBEV_SS_API_DIR}/libev" "${LIBEV_SS_API_DIR}/libev-cli.py"
-    ln -sf "${LIBEV_SS_API_DIR}/libev" /usr/local/bin/libev
+    cat > /usr/local/bin/libev <<EOF
+#!/bin/bash
+exec python3 ${LIBEV_SS_API_DIR}/libev-cli.py "\$@"
+EOF
+    chmod +x /usr/local/bin/libev
 }
 
 function write_configs() {
