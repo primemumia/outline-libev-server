@@ -8,7 +8,9 @@ __pycache__/
 .venv/
 venv/
 
-# Gecici / log
+# Telegram bot kurulum scripti (ayri proje — GitHub'a yuklenmez)
+out.sh
+
 *.log
 *.tmp
 .DS_Store
