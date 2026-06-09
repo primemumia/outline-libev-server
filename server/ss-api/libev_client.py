@@ -35,8 +35,24 @@ class LibevManagerClient:
             sock.sendto(command.encode("utf-8"), target)
             data, _ = sock.recvfrom(65535)
             return data.decode("utf-8", errors="replace").strip("\x00")
+        except socket.timeout as exc:
+            raise RuntimeError(
+                f"ss-manager yanit vermedi ({self.manager_address}). "
+                f"Kontrol: systemctl status shadowsocks-manager"
+            ) from exc
         finally:
             sock.close()
+
+    @staticmethod
+    def _check_response(resp: str, action: str) -> None:
+        if resp == "ok":
+            return
+        if resp == "err":
+            raise RuntimeError(
+                f"ss-manager '{action}' reddetti. "
+                f"Log: journalctl -u shadowsocks-manager -n 30 --no-pager"
+            )
+        raise RuntimeError(resp or f"{action} failed")
 
     def add_port(self, port: int, password: str, method: str = "chacha20-ietf-poly1305") -> None:
         payload = {
@@ -45,14 +61,12 @@ class LibevManagerClient:
             "method": method,
         }
         resp = self._send(f"add {json.dumps(payload, separators=(',', ':'))}")
-        if resp != "ok":
-            raise RuntimeError(resp or "add failed")
+        self._check_response(resp, "add")
 
     def remove_port(self, port: int) -> None:
         payload = {"server_port": port}
         resp = self._send(f"remove {json.dumps(payload, separators=(',', ':'))}")
-        if resp != "ok":
-            raise RuntimeError(resp or "remove failed")
+        self._check_response(resp, "remove")
 
     def list_ports(self) -> list:
         resp = self._send("list")
@@ -69,14 +83,12 @@ class LibevManagerClient:
     def set_ip(self, port: int, ip: str) -> None:
         payload = {"server_port": port, "ip": ip}
         resp = self._send(f"set_ip {json.dumps(payload, separators=(',', ':'))}")
-        if resp != "ok":
-            raise RuntimeError(resp or "set_ip failed")
+        self._check_response(resp, "set_ip")
 
     def clear_ip(self, port: int) -> None:
         payload = {"server_port": port}
         resp = self._send(f"clear_ip {json.dumps(payload, separators=(',', ':'))}")
-        if resp != "ok":
-            raise RuntimeError(resp or "clear_ip failed")
+        self._check_response(resp, "clear_ip")
 
     def ip_status(self, port: int) -> Dict[str, Any]:
         payload = {"server_port": port}

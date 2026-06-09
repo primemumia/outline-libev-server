@@ -65,11 +65,20 @@ def main(argv=None) -> int:
         manager = KeyManager.from_config(args.config)
     except FileNotFoundError as exc:
         print(f"❌ {exc}", file=sys.stderr)
-        print("💡 Kurulum: out.sh libev modu veya /etc/libev/cli.json oluşturun.", file=sys.stderr)
+        print("💡 Kurulum: install_server.sh veya /etc/libev/cli.json oluşturun.", file=sys.stderr)
         return 1
+
+    def ensure_manager():
+        try:
+            manager.client.ping()
+        except Exception as exc:
+            raise RuntimeError(
+                f"ss-manager erişilemiyor ({manager.client.manager_address}): {exc}"
+            ) from exc
 
     try:
         if args.command == "add" and args.add_target == "key":
+            ensure_manager()
             result = manager.add_key(args.name, port=args.port, password=args.password)
             print(f"✅ Anahtar oluşturuldu: {result['name']}")
             print(f"   Port: {result['port']}")
