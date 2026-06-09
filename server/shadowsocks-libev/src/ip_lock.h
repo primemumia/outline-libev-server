@@ -14,8 +14,7 @@
 #define IP_LOCK_RUNTIME_DIR "/run/shadowsocks-manager"
 #define IP_LOCK_MAX_TRACK_IPS 16
 #define IP_LOCK_STATUS_JSON_MAX 1024
-/* Kopuk TCP keepalive ile ~10 sn; uzun bosluk VPN'i kesmesin diye app idle ayri */
-#define IP_LOCK_IDLE_TIMEOUT_SEC 3600
+/* Kopuk TCP: keepalive + TCP_USER_TIMEOUT ile ~10 sn (uygulama idle timer yok) */
 #define IP_LOCK_KEEPIDLE_SEC 4
 #define IP_LOCK_KEEPINTVL_SEC 2
 #define IP_LOCK_KEEPCNT 3
@@ -27,7 +26,6 @@ void ip_lock_format_active_ips(const char *const *ips, int ip_count,
 void ip_lock_sidecar_path(char *out, size_t out_size, const char *port, const char *suffix);
 void ip_lock_ensure_runtime_dir(void);
 int ip_lock_is_enabled(void);
-int ip_lock_idle_timeout(void);
 void ip_lock_configure_client_socket(int fd);
 
 void ip_lock_init(const char *lock_file, const char *status_file);

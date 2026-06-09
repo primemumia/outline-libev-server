@@ -231,12 +231,6 @@ ip_lock_is_enabled(void)
     return ip_lock_enabled;
 }
 
-int
-ip_lock_idle_timeout(void)
-{
-    return IP_LOCK_IDLE_TIMEOUT_SEC;
-}
-
 void
 ip_lock_configure_client_socket(int fd)
 {

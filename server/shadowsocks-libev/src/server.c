@@ -1024,7 +1024,9 @@ server_recv_cb(EV_P_ ev_io *w, int revents)
         buf    = remote->buf;
 
         // Only timer the watcher if a valid connection is established
-        ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+        if (!ip_lock_is_enabled()) {
+            ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+        }
     }
 
     ssize_t r = recv(server->fd, buf->data, SOCKET_BUF_SIZE, 0);
@@ -1425,7 +1427,9 @@ remote_recv_cb(EV_P_ ev_io *w, int revents)
         return;
     }
 
-    ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+    if (!ip_lock_is_enabled()) {
+        ev_timer_again(EV_A_ & server->recv_ctx->watcher);
+    }
 
     ssize_t r = recv(remote->fd, server->buf->data, SOCKET_BUF_SIZE, 0);
 
@@ -1706,12 +1710,7 @@ new_server(int fd, listen_ctx_t *listener)
     crypto->ctx_init(crypto->cipher, server->e_ctx, 1);
     crypto->ctx_init(crypto->cipher, server->d_ctx, 0);
 
-    int timeout;
-    if (ip_lock_is_enabled()) {
-        timeout = ip_lock_idle_timeout();
-    } else {
-        timeout = max(MIN_TCP_IDLE_TIMEOUT, server->listen_ctx->timeout);
-    }
+    int timeout = max(MIN_TCP_IDLE_TIMEOUT, server->listen_ctx->timeout);
     ev_io_init(&server->recv_ctx->io, server_recv_cb, fd, EV_READ);
     ev_io_init(&server->send_ctx->io, server_send_cb, fd, EV_WRITE);
     ev_timer_init(&server->recv_ctx->watcher, server_timeout_cb,
@@ -1881,7 +1880,9 @@ accept_cb(EV_P_ ev_io *w, int revents)
     }
     update_ip_lock_status();
     ev_io_start(EV_A_ & server->recv_ctx->io);
-    ev_timer_start(EV_A_ & server->recv_ctx->watcher);
+    if (!ip_lock_is_enabled()) {
+        ev_timer_start(EV_A_ & server->recv_ctx->watcher);
+    }
 }
 
 int

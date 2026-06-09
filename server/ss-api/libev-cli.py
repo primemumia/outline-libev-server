@@ -92,7 +92,7 @@ def print_port_status(info: dict) -> None:
     elif info["state"] == "empty":
         print("Not         : Port bos; ilk baglanan IP otomatik kilitlenir.")
     elif info["state"] == "active":
-        print("Not         : Kopuk TCP oturumu keepalive ile ~10 sn temizlenir.")
+        print("Not         : Kopuk TCP ~10 sn icinde keepalive ile temizlenir.")
 
 
 def run_server_delete(yes: bool) -> int:
