@@ -1,6 +1,5 @@
-# Derleme ciktilari
+# Derleme ciktilari (kaynak icinde)
 server/shadowsocks-libev/build/
-server/bin/
 
 # Python
 __pycache__/

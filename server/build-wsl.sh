@@ -9,9 +9,9 @@ cp -a "$WIN_SRC/src/ip_lock.c" "$WIN_SRC/src/ip_lock.h" "$WIN_SRC/src/server.h" 
 cd "$WSL_SRC/build"
 make -j4 ss-server-shared ss-manager-shared
 
-mkdir -p "/mnt/c/Users/prime/Desktop/test out/server/bin"
-cp -f "$WSL_SRC/build/shared/bin/ss-server" "/mnt/c/Users/prime/Desktop/test out/server/bin/"
-cp -f "$WSL_SRC/build/shared/bin/ss-manager" "/mnt/c/Users/prime/Desktop/test out/server/bin/"
+mkdir -p "/mnt/c/Users/prime/Desktop/test out/server/bin/x86_64"
+cp -f "$WSL_SRC/build/shared/bin/ss-server" "/mnt/c/Users/prime/Desktop/test out/server/bin/x86_64/"
+cp -f "$WSL_SRC/build/shared/bin/ss-manager" "/mnt/c/Users/prime/Desktop/test out/server/bin/x86_64/"
 
 echo "BUILD OK"
-ls -la "/mnt/c/Users/prime/Desktop/test out/server/bin/"
+ls -la "/mnt/c/Users/prime/Desktop/test out/server/bin/x86_64/"

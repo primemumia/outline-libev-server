@@ -15,6 +15,7 @@
 #   LIBEV_WORKDIR       ss-manager workdir (varsayilan: /var/lib/shadowsocks-manager)
 #   LIBEV_PORT_START    Port havuzu baslangic (444)
 #   LIBEV_PORT_END      Port havuzu bitis (999)
+#   LIBEV_FORCE_BUILD   1 ise kaynak derleme (on derlenmis binary yok sayilir)
 #
 # Bayraklar:
 #   --hostname HOST     Sunucu public IP veya domain
@@ -39,6 +40,7 @@ FLAGS_API_PORT=0
 FLAGS_MANAGER_PORT=0
 FLAGS_LOCAL=0
 LIBEV_SOURCE_DIR="${LIBEV_SOURCE_DIR:-}"
+PREBUILT_BIN_DIR=""
 
 FULL_LOG="$(mktemp -t libev_install_logXXXXXX)"
 LAST_ERROR="$(mktemp -t libev_install_errXXXXXX)"
@@ -147,6 +149,23 @@ function install_dependencies() {
         rsync
 }
 
+function cache_prebuilt_from_dir() {
+    local src="$1"
+    PREBUILT_BIN_DIR="${LIBEV_INSTALL_DIR}/prebuilt/${MACHINE_TYPE}"
+    mkdir -p "${PREBUILT_BIN_DIR}"
+    install -m 755 "${src}/ss-server" "${PREBUILT_BIN_DIR}/ss-server"
+    install -m 755 "${src}/ss-manager" "${PREBUILT_BIN_DIR}/ss-manager"
+}
+
+function try_cache_prebuilt() {
+    local candidate="$1"
+    if [[ -f "${candidate}/ss-server" && -f "${candidate}/ss-manager" ]]; then
+        cache_prebuilt_from_dir "${candidate}"
+        return 0
+    fi
+    return 1
+}
+
 function fetch_server_sources() {
     mkdir -p "${LIBEV_INSTALL_DIR}" "${LIBEV_WORKDIR}" "${LIBEV_SS_API_DIR}" "${LIBEV_SRC_DIR}" /etc/libev
 
@@ -161,6 +180,7 @@ function fetch_server_sources() {
         fi
         rsync -a --delete "${src_root}/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
         rsync -a "${src_root}/ss-api/" "${LIBEV_SS_API_DIR}/"
+        try_cache_prebuilt "${src_root}/bin/${MACHINE_TYPE}" || true
         return 0
     fi
 
@@ -177,8 +197,24 @@ function fetch_server_sources() {
 
     rsync -a --delete "${clone_dir}/server/shadowsocks-libev/" "${LIBEV_SRC_DIR}/"
     rsync -a "${clone_dir}/server/ss-api/" "${LIBEV_SS_API_DIR}/"
+    try_cache_prebuilt "${clone_dir}/server/bin/${MACHINE_TYPE}" || true
 
     rm -rf "${clone_dir}"
+}
+
+function install_shadowsocks_binaries() {
+    if [[ "${LIBEV_FORCE_BUILD:-0}" == "1" ]]; then
+        build_shadowsocks_libev
+        return 0
+    fi
+
+    if [[ -n "${PREBUILT_BIN_DIR}" && -x "${PREBUILT_BIN_DIR}/ss-server" && -x "${PREBUILT_BIN_DIR}/ss-manager" ]]; then
+        install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
+        install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
+        return 0
+    fi
+
+    build_shadowsocks_libev
 }
 
 function build_shadowsocks_libev() {
@@ -388,12 +424,12 @@ function main() {
 
     require_root
 
-    local MACHINE_TYPE
     MACHINE_TYPE="$(uname -m)"
     if [[ "${MACHINE_TYPE}" != "x86_64" && "${MACHINE_TYPE}" != "aarch64" ]]; then
         log_error "Desteklenmeyen mimari: ${MACHINE_TYPE}"
         exit 1
     fi
+    readonly MACHINE_TYPE
 
     if ! command_exists curl; then
         apt-get update -qq && apt-get install -y curl ca-certificates
@@ -426,7 +462,11 @@ function main() {
     else
         run_step "Kaynak kod indiriliyor (${LIBEV_REPO})" fetch_server_sources
     fi
-    run_step "shadowsocks-libev derleniyor" build_shadowsocks_libev
+    if [[ -n "${PREBUILT_BIN_DIR}" ]]; then
+        run_step "On derlenmis binary kuruluyor (${MACHINE_TYPE})" install_shadowsocks_binaries
+    else
+        run_step "shadowsocks-libev derleniyor" install_shadowsocks_binaries
+    fi
     run_step "Python bagimliliklari kuruluyor" install_python_deps
     run_step "API secret uretiliyor" generate_api_secret
     run_step "Yapilandirma yaziliyor" write_configs
