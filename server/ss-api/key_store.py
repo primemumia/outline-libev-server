@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Shared shadowsocks-libev key/port store."""
+
+import base64
+import json
+import secrets
+import string
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from libev_client import LibevManagerClient
+
+DEFAULT_METHOD = "chacha20-ietf-poly1305"
+DEFAULT_PORT_START = 444
+DEFAULT_PORT_END = 999
+
+
+def generate_password(length: int = 22) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def make_access_url(method: str, password: str, host: str, port: int) -> str:
+    creds = base64.urlsafe_b64encode(f"{method}:{password}".encode()).decode().rstrip("=")
+    return f"ss://{creds}@{host}:{port}/"
+
+
+class KeyManager:
+    def __init__(
+        self,
+        manager_address: str = "127.0.0.1:6001",
+        server_ip: str = "127.0.0.1",
+        port_store_path: str = "/var/lib/shadowsocks-manager/ports.json",
+        port_start: int = DEFAULT_PORT_START,
+        port_end: int = DEFAULT_PORT_END,
+    ):
+        self.client = LibevManagerClient(manager_address)
+        self.server_ip = server_ip
+        self.port_store_path = Path(port_store_path)
+        self.port_start = port_start
+        self.port_end = port_end
+        self.ports: Dict[str, Dict[str, Any]] = self._load_ports()
+
+    @classmethod
+    def from_config(cls, config_path: str = "/etc/libev/cli.json") -> "KeyManager":
+        path = Path(config_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Config bulunamadı: {config_path}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        port_range = data.get("port_range", {})
+        return cls(
+            manager_address=data.get("manager_address", "127.0.0.1:6001"),
+            server_ip=data.get("server_ip", "127.0.0.1"),
+            port_store_path=data.get("port_store", "/var/lib/shadowsocks-manager/ports.json"),
+            port_start=int(port_range.get("start", DEFAULT_PORT_START)),
+            port_end=int(port_range.get("end", DEFAULT_PORT_END)),
+        )
+
+    def _load_ports(self) -> Dict[str, Dict[str, Any]]:
+        if not self.port_store_path.exists():
+            return {}
+        try:
+            return json.loads(self.port_store_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def save(self) -> None:
+        self.port_store_path.parent.mkdir(parents=True, exist_ok=True)
+        self.port_store_path.write_text(
+            json.dumps(self.ports, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    def _used_ports(self) -> set:
+        return {int(port) for port in self.ports.keys()}
+
+    def allocate_port(self, preferred: Optional[int] = None) -> int:
+        used = self._used_ports()
+        if preferred is not None:
+            preferred = int(preferred)
+            if preferred in used:
+                raise ValueError(f"Port {preferred} zaten kullanılıyor")
+            if not (self.port_start <= preferred <= self.port_end):
+                raise ValueError(f"Port {preferred} aralık dışında ({self.port_start}-{self.port_end})")
+            return preferred
+        for port in range(self.port_start, self.port_end + 1):
+            if port not in used:
+                return port
+        raise RuntimeError(f"Boş port yok ({self.port_start}-{self.port_end})")
+
+    def find_by_name(self, name: str) -> Optional[Tuple[int, Dict[str, Any]]]:
+        target = name.strip().lower()
+        for port_str, entry in self.ports.items():
+            entry_name = str(entry.get("name", "")).lower()
+            if entry_name == target:
+                return int(port_str), entry
+        return None
+
+    def key_payload(self, port: int, entry: Dict[str, Any]) -> Dict[str, Any]:
+        method = entry.get("method", DEFAULT_METHOD)
+        password = entry["password"]
+        return {
+            "id": str(port),
+            "name": entry.get("name", f"port-{port}"),
+            "password": password,
+            "port": port,
+            "method": method,
+            "accessUrl": make_access_url(method, password, self.server_ip, port),
+            "lockedIp": entry.get("locked_ip"),
+        }
+
+    def add_key(
+        self,
+        name: str,
+        port: Optional[int] = None,
+        password: Optional[str] = None,
+        method: str = DEFAULT_METHOD,
+    ) -> Dict[str, Any]:
+        name = name.strip()
+        if not name:
+            raise ValueError("Anahtar adı boş olamaz")
+        if self.find_by_name(name):
+            raise ValueError(f"Anahtar zaten var: {name}")
+
+        chosen_port = self.allocate_port(port)
+        chosen_password = password or generate_password()
+
+        self.client.add_port(chosen_port, chosen_password, method)
+        self.ports[str(chosen_port)] = {
+            "password": chosen_password,
+            "method": method,
+            "name": name,
+            "locked_ip": None,
+        }
+        self.save()
+        return self.key_payload(chosen_port, self.ports[str(chosen_port)])
+
+    def delete_key(self, name: str) -> Dict[str, Any]:
+        found = self.find_by_name(name)
+        if not found:
+            raise ValueError(f"Anahtar bulunamadı: {name}")
+        port, entry = found
+        try:
+            self.client.clear_ip(port)
+        except Exception:
+            pass
+        self.client.remove_port(port)
+        del self.ports[str(port)]
+        self.save()
+        return self.key_payload(port, entry)
+
+    def list_keys(self) -> List[Dict[str, Any]]:
+        items = []
+        for port_str in sorted(self.ports.keys(), key=lambda x: int(x)):
+            items.append(self.key_payload(int(port_str), self.ports[port_str]))
+        return items
+
+    def show_key(self, name: str) -> Dict[str, Any]:
+        found = self.find_by_name(name)
+        if not found:
+            raise ValueError(f"Anahtar bulunamadı: {name}")
+        port, entry = found
+        payload = self.key_payload(port, entry)
+        payload["status"] = self.client.ip_status(port)
+        return payload
+
+    def set_lock_ip(self, name: str, ip: str) -> Dict[str, Any]:
+        found = self.find_by_name(name)
+        if not found:
+            raise ValueError(f"Anahtar bulunamadı: {name}")
+        port, entry = found
+        self.client.set_ip(port, ip)
+        entry["locked_ip"] = ip
+        self.ports[str(port)] = entry
+        self.save()
+        return {"ok": True, "name": name, "port": port, "ip": ip}
+
+    def clear_lock_ip(self, name: str) -> None:
+        found = self.find_by_name(name)
+        if not found:
+            raise ValueError(f"Anahtar bulunamadı: {name}")
+        port, entry = found
+        self.client.clear_ip(port)
+        entry["locked_ip"] = None
+        self.ports[str(port)] = entry
+        self.save()
