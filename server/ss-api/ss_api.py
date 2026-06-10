@@ -59,17 +59,25 @@ class SSApiServer:
 
     async def handle_create_key(self, request: web.Request) -> web.Response:
         await self._require_auth(request)
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            body = {}
         port = body.get("port")
-        if port is None:
-            raise web.HTTPBadRequest(text="port required")
-        name = body.get("name", f"port-{port}")
-        result = self.keys.add_key(
-            name=name,
-            port=int(port),
-            password=body.get("password"),
-            method=body.get("method", DEFAULT_METHOD),
-        )
+        name = body.get("name")
+        if not name:
+            name = f"port-{port}" if port is not None else "key"
+        try:
+            result = self.keys.add_key(
+                name=name,
+                port=int(port) if port is not None else None,
+                password=body.get("password"),
+                method=body.get("method", DEFAULT_METHOD),
+            )
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        except RuntimeError as exc:
+            raise web.HTTPInternalServerError(text=str(exc)) from exc
         return web.json_response(result, status=201)
 
     async def handle_list_keys(self, request: web.Request) -> web.Response:
