@@ -512,7 +512,17 @@ EOF
 }
 
 function output_install_result() {
-    printf '{"apiUrl":"%s","certSha256":"%s"}\n' "${PUBLIC_API_URL}" "${CERT_SHA256}"
+    local outline_json
+    outline_json="$(printf '{"apiUrl":"%s","certSha256":"%s"}' "${PUBLIC_API_URL}" "${CERT_SHA256}")"
+
+    cat <<EOF
+
+Congratulations! This Libev server is ready to use.
+
+Outline uyumlu API JSON (bot config icin):
+
+${outline_json}
+EOF
 }
 
 function finish() {
