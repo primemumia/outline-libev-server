@@ -512,49 +512,7 @@ EOF
 }
 
 function output_install_result() {
-    local outline_json
-    outline_json="$(printf '{"apiUrl":"%s","certSha256":"%s"}' "${PUBLIC_API_URL}" "${CERT_SHA256}")"
-
-    cat <<EOF
-
-Congratulations! This Libev server is ready to use.
-
-Outline uyumlu API JSON (bot config icin):
-
-${outline_json}
-
-Bot outline_apis ornegi:
-
-{
-  "id": "api1",
-  "type": "libev",
-  "name": "Libev Server",
-  "api": {
-    "apiUrl": "${PUBLIC_API_URL}",
-    "certSha256": "${CERT_SHA256}"
-  },
-  "server_ip": "${PUBLIC_HOSTNAME}",
-  "manager_address": "${MANAGER_SOCKET}",
-  "workdir": "${LIBEV_WORKDIR}",
-  "keys": []
-}
-
-Manuel anahtar komutlari:
-  libev add key mumia
-  libev del key mumia
-  libev list keys
-  libev list keys --live
-  libev status port 444
-  libev status ports
-  libev show key mumia
-  libev server delete --yes
-
-Ilk anahtar (default):
-${FIRST_KEY_JSON}
-
-Access config: ${ACCESS_CONFIG}
-
-EOF
+    printf '{"apiUrl":"%s","certSha256":"%s"}\n' "${PUBLIC_API_URL}" "${CERT_SHA256}"
 }
 
 function finish() {
