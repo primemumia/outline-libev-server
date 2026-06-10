@@ -194,7 +194,6 @@ update_ip_lock_status(void)
 {
     struct cork_dllist_item *curr, *next;
     const char *unique_ips[IP_LOCK_MAX_TRACK_IPS];
-    char active_buf[IP_LOCK_STATUS_JSON_MAX];
     int unique_count = 0;
     int total        = 0;
     int i;
@@ -215,8 +214,7 @@ update_ip_lock_status(void)
         }
     }
 
-    ip_lock_format_active_ips(unique_ips, unique_count, active_buf, sizeof(active_buf));
-    ip_lock_write_status(total, active_buf);
+    ip_lock_write_status(total, unique_ips, unique_count);
 }
 
 static int
@@ -323,6 +321,10 @@ stat_update_cb(EV_P_ ev_timer *watcher, int revents)
     }
 
     close(sfd);
+
+    if (ip_lock_is_enabled()) {
+        update_ip_lock_status();
+    }
 }
 
 #endif
@@ -1847,9 +1849,6 @@ accept_cb(EV_P_ ev_io *w, int revents)
                 return;
             }
         }
-        if (ip_lock_is_enabled()) {
-            ip_lock_record_incoming(peer_name);
-        }
         if (!check_ip_lock_allowed(peer_name)) {
             if (ip_lock_is_enabled()) {
                 ip_lock_record_blocked(peer_name);
@@ -1857,6 +1856,9 @@ accept_cb(EV_P_ ev_io *w, int revents)
             }
             close(serverfd);
             return;
+        }
+        if (ip_lock_is_enabled()) {
+            ip_lock_record_incoming(peer_name);
         }
     }
 

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef __MINGW32__
@@ -19,34 +20,81 @@
 #include "ip_lock.h"
 #include "utils.h"
 
+typedef struct {
+    char ip[INET6_ADDRSTRLEN];
+    time_t seen_at;
+} ip_lock_recent_entry_t;
+
 static char lock_file_path[512];
 static char status_file_path[512];
 static char locked_ip[INET6_ADDRSTRLEN];
-static char recent_incoming[IP_LOCK_RECENT_MAX][INET6_ADDRSTRLEN];
+static ip_lock_recent_entry_t recent_incoming[IP_LOCK_RECENT_MAX];
 static int recent_incoming_count = 0;
-static char blocked_ips[IP_LOCK_RECENT_MAX][INET6_ADDRSTRLEN];
+static ip_lock_recent_entry_t blocked_ips[IP_LOCK_RECENT_MAX];
 static int blocked_count = 0;
 static time_t lock_file_mtime = 0;
 static int ip_lock_enabled     = 0;
 
-static void
-ip_lock_push_recent(char store[][INET6_ADDRSTRLEN], int *count, const char *ip)
+static int
+ip_lock_ip_in_list(const char *const *ips, int ip_count, const char *ip)
 {
     int i;
-    char prev[IP_LOCK_RECENT_MAX][INET6_ADDRSTRLEN];
 
-    if (ip == NULL || ip[0] == '\0' || count == NULL) {
+    if (ip == NULL || ip[0] == '\0' || ips == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < ip_count; i++) {
+        if (ips[i] != NULL && strcmp(ips[i], ip) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static void
+ip_lock_prune_recent(ip_lock_recent_entry_t *store, int *count, time_t now)
+{
+    int i;
+    int write_idx = 0;
+
+    if (count == NULL || store == NULL) {
         return;
     }
 
     for (i = 0; i < *count; i++) {
-        if (strcmp(store[i], ip) == 0) {
-            if (i == 0) {
-                return;
+        if (now - store[i].seen_at <= IP_LOCK_RECENT_TTL_SEC) {
+            if (write_idx != i) {
+                store[write_idx] = store[i];
             }
-            memmove(&store[1], &store[0], (size_t)i * INET6_ADDRSTRLEN);
-            strncpy(store[0], ip, INET6_ADDRSTRLEN - 1);
-            store[0][INET6_ADDRSTRLEN - 1] = '\0';
+            write_idx++;
+        }
+    }
+
+    *count = write_idx;
+}
+
+static void
+ip_lock_push_recent(ip_lock_recent_entry_t *store, int *count, const char *ip)
+{
+    int i;
+    time_t now = time(NULL);
+
+    if (ip == NULL || ip[0] == '\0' || count == NULL || store == NULL) {
+        return;
+    }
+
+    ip_lock_prune_recent(store, count, now);
+
+    for (i = 0; i < *count; i++) {
+        if (strcmp(store[i].ip, ip) == 0) {
+            store[i].seen_at = now;
+            if (i > 0) {
+                ip_lock_recent_entry_t tmp = store[i];
+                memmove(&store[1], &store[0], (size_t)i * sizeof(ip_lock_recent_entry_t));
+                store[0] = tmp;
+            }
             return;
         }
     }
@@ -57,12 +105,10 @@ ip_lock_push_recent(char store[][INET6_ADDRSTRLEN], int *count, const char *ip)
         *count = IP_LOCK_RECENT_MAX;
     }
 
-    memcpy(prev, store, sizeof(prev));
-    strncpy(store[0], ip, INET6_ADDRSTRLEN - 1);
-    store[0][INET6_ADDRSTRLEN - 1] = '\0';
-    for (i = 1; i < *count; i++) {
-        memcpy(store[i], prev[i - 1], INET6_ADDRSTRLEN);
-    }
+    memmove(&store[1], &store[0], (size_t)(*count - 1) * sizeof(ip_lock_recent_entry_t));
+    strncpy(store[0].ip, ip, INET6_ADDRSTRLEN - 1);
+    store[0].ip[INET6_ADDRSTRLEN - 1] = '\0';
+    store[0].seen_at = now;
 }
 
 static void
@@ -107,12 +153,20 @@ ip_lock_init(const char *lock_file, const char *status_file)
 void
 ip_lock_reload(void)
 {
+    char previous_ip[INET6_ADDRSTRLEN];
+
     if (lock_file_path[0] == '\0') {
         return;
     }
 
+    strncpy(previous_ip, locked_ip, sizeof(previous_ip) - 1);
+    previous_ip[sizeof(previous_ip) - 1] = '\0';
+
     struct stat st;
     if (stat(lock_file_path, &st) != 0) {
+        if (locked_ip[0] != '\0') {
+            ip_lock_reset_recent_lists();
+        }
         locked_ip[0] = '\0';
         lock_file_mtime = 0;
         return;
@@ -140,6 +194,10 @@ ip_lock_reload(void)
         }
     }
     fclose(f);
+
+    if (strcmp(previous_ip, locked_ip) != 0) {
+        ip_lock_reset_recent_lists();
+    }
 }
 
 const char *
@@ -153,6 +211,10 @@ ip_lock_set(const char *ip)
 {
     if (ip == NULL || ip[0] == '\0') {
         return;
+    }
+
+    if (locked_ip[0] != '\0' && strcmp(locked_ip, ip) != 0) {
+        ip_lock_reset_recent_lists();
     }
 
     strncpy(locked_ip, ip, sizeof(locked_ip) - 1);
@@ -269,45 +331,58 @@ ip_lock_json_escape(const char *in, char *out, size_t out_size)
 }
 
 void
-ip_lock_write_status(int total_conn, const char *active_ips_json)
+ip_lock_write_status(int total_conn, const char *const *active_ips, int active_count)
 {
     char locked_esc[INET6_ADDRSTRLEN * 2];
+    char active_json[IP_LOCK_STATUS_JSON_MAX];
     char incoming_json[IP_LOCK_STATUS_JSON_MAX];
     char blocked_json[IP_LOCK_STATUS_JSON_MAX];
     const char *incoming_ptrs[IP_LOCK_RECENT_MAX];
     const char *blocked_ptrs[IP_LOCK_RECENT_MAX];
+    int incoming_filtered = 0;
+    int blocked_filtered  = 0;
+    time_t now            = time(NULL);
     int i;
 
     if (status_file_path[0] == '\0') {
         return;
     }
 
+    ip_lock_prune_recent(recent_incoming, &recent_incoming_count, now);
+    ip_lock_prune_recent(blocked_ips, &blocked_count, now);
+
+    for (i = 0; i < recent_incoming_count; i++) {
+        const char *ip = recent_incoming[i].ip;
+        if (ip_lock_ip_in_list(active_ips, active_count, ip)) {
+            continue;
+        }
+        incoming_ptrs[incoming_filtered++] = ip;
+    }
+
+    for (i = 0; i < blocked_count; i++) {
+        const char *ip = blocked_ips[i].ip;
+        if (ip_lock_ip_in_list(active_ips, active_count, ip)) {
+            continue;
+        }
+        blocked_ptrs[blocked_filtered++] = ip;
+    }
+
+    ip_lock_format_active_ips(active_ips, active_count, active_json, sizeof(active_json));
+    ip_lock_format_active_ips(incoming_ptrs, incoming_filtered,
+                              incoming_json, sizeof(incoming_json));
+    ip_lock_format_active_ips(blocked_ptrs, blocked_filtered,
+                              blocked_json, sizeof(blocked_json));
+    ip_lock_json_escape(locked_ip, locked_esc, sizeof(locked_esc));
+
     FILE *f = fopen(status_file_path, "w");
     if (f == NULL) {
         return;
     }
 
-    if (active_ips_json == NULL) {
-        active_ips_json = "[]";
-    }
-
-    for (i = 0; i < recent_incoming_count; i++) {
-        incoming_ptrs[i] = recent_incoming[i];
-    }
-    for (i = 0; i < blocked_count; i++) {
-        blocked_ptrs[i] = blocked_ips[i];
-    }
-
-    ip_lock_format_active_ips(incoming_ptrs, recent_incoming_count,
-                              incoming_json, sizeof(incoming_json));
-    ip_lock_format_active_ips(blocked_ptrs, blocked_count,
-                              blocked_json, sizeof(blocked_json));
-    ip_lock_json_escape(locked_ip, locked_esc, sizeof(locked_esc));
-
     fprintf(f,
             "{\"locked_ip\":\"%s\",\"connections\":%d,\"active_ips\":%s,"
             "\"recent_incoming\":%s,\"blocked_ips\":%s}\n",
-            locked_esc, total_conn, active_ips_json, incoming_json, blocked_json);
+            locked_esc, total_conn, active_json, incoming_json, blocked_json);
     fclose(f);
 }
 

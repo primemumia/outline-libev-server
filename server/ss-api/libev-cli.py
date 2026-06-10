@@ -90,8 +90,8 @@ def print_port_status(info: dict) -> None:
     print(f"Kilitli IP  : {info.get('locked_ip') or '-'}")
     print(f"Baglanti    : {info.get('connections', 0)}")
     print_ip_list("Aktif IP'ler", info.get("active_ips") or [])
-    print_ip_list("Gelen IP'ler", info.get("recent_incoming") or [])
-    print_ip_list("Engellenen IP'ler", info.get("blocked_ips") or [])
+    print_ip_list("Gelen IP'ler (son 30 sn)", info.get("recent_incoming") or [])
+    print_ip_list("Engellenen IP'ler (son 30 sn)", info.get("blocked_ips") or [])
     if info["state"] == "zombie":
         print("Not         : Kilit kayitli ama canli oturum yok; yeni IP devralabilir.")
     elif info["state"] == "empty":

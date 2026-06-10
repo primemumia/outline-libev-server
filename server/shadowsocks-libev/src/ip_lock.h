@@ -14,6 +14,7 @@
 #define IP_LOCK_RUNTIME_DIR "/run/shadowsocks-manager"
 #define IP_LOCK_MAX_TRACK_IPS 16
 #define IP_LOCK_RECENT_MAX 8
+#define IP_LOCK_RECENT_TTL_SEC 30
 #define IP_LOCK_STATUS_JSON_MAX 1024
 /* Kopuk TCP: keepalive + TCP_USER_TIMEOUT ile ~10 sn (uygulama idle timer yok) */
 #define IP_LOCK_KEEPIDLE_SEC 4
@@ -36,6 +37,6 @@ void ip_lock_set(const char *ip);
 void ip_lock_clear(void);
 void ip_lock_record_incoming(const char *ip);
 void ip_lock_record_blocked(const char *ip);
-void ip_lock_write_status(int total_conn, const char *active_ips_json);
+void ip_lock_write_status(int total_conn, const char *const *active_ips, int active_count);
 
 #endif
