@@ -44,6 +44,13 @@ class LibevManagerClient:
 
     def _send_unix(self, command: str, target: str) -> str:
         """Unix DGRAM: istemci bind etmezse ss-manager yanit gonderemez."""
+        if not os.path.exists(target):
+            raise RuntimeError(
+                f"ss-manager socket yok: {target}\n"
+                f"Servis calismiyor olabilir:\n"
+                f"  systemctl status shadowsocks-manager\n"
+                f"  journalctl -u shadowsocks-manager -n 30 --no-pager"
+            )
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         client_path = f"/tmp/libev-cli-{os.getpid()}.sock"
         sock.settimeout(self.timeout)

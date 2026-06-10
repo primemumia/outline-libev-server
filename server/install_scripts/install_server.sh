@@ -209,7 +209,27 @@ function install_dependencies() {
     apt_update
     apt_install \
         python3 python3-pip curl ca-certificates git \
-        rsync nginx openssl libcap2-bin
+        rsync nginx openssl libcap2-bin \
+        libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7 \
+        2>/dev/null || apt_install \
+        python3 python3-pip curl ca-certificates git \
+        rsync nginx openssl libcap2-bin \
+        libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedtls14 \
+        2>/dev/null || apt_install \
+        python3 python3-pip curl ca-certificates git \
+        rsync nginx openssl libcap2-bin \
+        libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto3
+}
+
+function verify_binary_deps() {
+    local missing
+    missing="$(ldd /usr/local/bin/ss-manager 2>/dev/null | grep 'not found' || true)"
+    if [[ -n "${missing}" ]]; then
+        log_error "ss-manager kutuphane eksik:${missing}"
+        log_error "apt install libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7"
+        return 1
+    fi
+    return 0
 }
 
 function cache_prebuilt_from_dir() {
@@ -289,6 +309,7 @@ function install_shadowsocks_binaries() {
 
     install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
     install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
+    verify_binary_deps
 }
 
 function install_python_deps() {
@@ -336,10 +357,12 @@ After=network.target
 [Service]
 Type=simple
 User=root
+StateDirectory=shadowsocks-manager
 RuntimeDirectory=shadowsocks-manager
+ExecStartPre=/bin/mkdir -p ${LIBEV_WORKDIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/ss-manager -u --executable /usr/local/bin/ss-server --manager-address ${MANAGER_SOCKET} --workdir ${LIBEV_WORKDIR} -s 0.0.0.0 -m chacha20-ietf-poly1305
-StandardOutput=null
+StandardOutput=journal
 StandardError=journal
 Restart=on-failure
 RestartSec=3
@@ -410,12 +433,31 @@ EOF
 }
 
 function start_services() {
+    mkdir -p "${LIBEV_WORKDIR}"
     systemctl daemon-reload
     systemctl enable shadowsocks-manager ss-api
     systemctl restart shadowsocks-manager
+    if ! systemctl is-active --quiet shadowsocks-manager; then
+        journalctl -u shadowsocks-manager -n 25 --no-pager >> "${FULL_LOG}" 2>&1 || true
+        log_error "shadowsocks-manager baslamadi: journalctl -u shadowsocks-manager -n 30 --no-pager"
+        return 1
+    fi
     sleep 2
     systemctl restart ss-api
     sleep 1
+}
+
+function wait_for_manager() {
+    local -i i
+    for i in $(seq 1 15); do
+        if [[ -S "${MANAGER_SOCKET}" ]]; then
+            return 0
+        fi
+        sleep 1
+    done
+    journalctl -u shadowsocks-manager -n 25 --no-pager >> "${FULL_LOG}" 2>&1 || true
+    log_error "manager.sock yok (${MANAGER_SOCKET}). journalctl -u shadowsocks-manager -n 30"
+    return 1
 }
 
 function wait_for_api() {
@@ -621,6 +663,7 @@ function main() {
     rm -f "${LIBEV_WORKDIR}"/.shadowsocks_*.iplock "${LIBEV_WORKDIR}"/.shadowsocks_*.ipstatus 2>/dev/null || true
     run_step "HTTPS API (nginx) kuruluyor" setup_api_tls
     run_step "Servisler baslatiliyor" start_services
+    run_step "ss-manager bekleniyor" wait_for_manager
     run_step "API bekleniyor" wait_for_api
     run_step "Ilk anahtar olusturuluyor" create_first_access_key
     run_step "Access config yaziliyor" write_access_config
