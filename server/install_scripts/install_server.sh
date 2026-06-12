@@ -39,6 +39,7 @@ readonly LIBEV_BRANCH="${LIBEV_BRANCH:-main}"
 readonly LIBEV_INSTALL_DIR="${LIBEV_INSTALL_DIR:-/opt/libev-server}"
 readonly LIBEV_WORKDIR="${LIBEV_WORKDIR:-/var/lib/shadowsocks-manager}"
 readonly LIBEV_SS_API_DIR="${LIBEV_SS_API_DIR:-/opt/ss-api}"
+readonly LIBEV_SRC_DIR="${LIBEV_SRC_DIR:-${LIBEV_INSTALL_DIR}/shadowsocks-libev-src}"
 readonly LIBEV_PORT_START="${LIBEV_PORT_START:-444}"
 readonly LIBEV_PORT_END="${LIBEV_PORT_END:-999}"
 readonly MANAGER_SOCKET="${MANAGER_SOCKET:-${LIBEV_WORKDIR}/manager.sock}"
@@ -221,12 +222,92 @@ function install_dependencies() {
         libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto3
 }
 
+function host_glibc_version() {
+    getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}'
+}
+
+function detect_host_os_tag() {
+    local os_id="" os_ver="" glibc=""
+    if [[ -f /etc/os-release ]]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        os_id="${ID:-}"
+        os_ver="${VERSION_ID:-}"
+    fi
+
+    case "${os_id}:${os_ver}" in
+        ubuntu:24.04) echo "ubuntu24.04" ; return 0 ;;
+        ubuntu:22.04) echo "ubuntu22.04" ; return 0 ;;
+        ubuntu:20.04) echo "ubuntu20.04" ; return 0 ;;
+    esac
+
+    glibc="$(host_glibc_version)"
+    case "${glibc}" in
+        2.4*) echo "ubuntu24.04" ;;
+        2.35|2.36|2.37) echo "ubuntu22.04" ;;
+        2.3[0-4]*) echo "ubuntu20.04" ;;
+        *) echo "auto" ;;
+    esac
+}
+
+function prebuilt_candidate_dirs() {
+    local base="$1"
+    local tag="$2"
+
+    case "${tag}" in
+        ubuntu24.04)
+            printf '%s\n' \
+                "${base}/ubuntu24.04" \
+                "${base}/glibc2.38" \
+                "${base}/ubuntu22.04" \
+                "${base}/glibc2.35"
+            ;;
+        ubuntu22.04)
+            printf '%s\n' \
+                "${base}/ubuntu22.04" \
+                "${base}/glibc2.35" \
+                "${base}/glibc2.31"
+            ;;
+        ubuntu20.04)
+            printf '%s\n' \
+                "${base}/ubuntu20.04" \
+                "${base}/glibc2.31" \
+                "${base}/ubuntu22.04" \
+                "${base}/glibc2.35"
+            ;;
+        *)
+            printf '%s\n' \
+                "${base}/ubuntu24.04" \
+                "${base}/glibc2.38" \
+                "${base}/ubuntu22.04" \
+                "${base}/glibc2.35" \
+                "${base}/glibc2.31"
+            ;;
+    esac
+}
+
+function binary_is_compatible() {
+    local bin="$1"
+    local ldd_out
+    [[ -x "${bin}" ]] || return 1
+    ldd_out="$(ldd "${bin}" 2>&1)" || true
+    if echo "${ldd_out}" | grep -q "not found"; then
+        return 1
+    fi
+    return 0
+}
+
 function verify_binary_deps() {
     local missing
     missing="$(ldd /usr/local/bin/ss-manager 2>/dev/null | grep 'not found' || true)"
     if [[ -n "${missing}" ]]; then
         log_error "ss-manager kutuphane eksik:${missing}"
-        log_error "apt install libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7"
+        if echo "${missing}" | grep -q 'GLIBC_'; then
+            log_error "Prebuilt binary sunucu glibc surumu ile uyumsuz (sunucu: $(host_glibc_version))."
+            log_error "Kaynak derleme deneniyor veya gelistirici build-wsl.sh ile glibc2.35 binary push etmeli."
+        else
+            log_error "apt install libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7"
+        fi
         return 1
     fi
     return 0
@@ -241,12 +322,93 @@ function cache_prebuilt_from_dir() {
 }
 
 function try_cache_prebuilt() {
-    local candidate="$1"
-    if [[ -f "${candidate}/ss-server" && -f "${candidate}/ss-manager" ]]; then
-        cache_prebuilt_from_dir "${candidate}"
-        return 0
-    fi
+    local base="$1"
+    local tag candidate seen=""
+    tag="$(detect_host_os_tag)"
+    echo "OS tespiti: ${tag} (glibc $(host_glibc_version))" >> "${FULL_LOG}"
+
+    while IFS= read -r candidate; do
+        [[ -n "${candidate}" ]] || continue
+        if [[ " ${seen} " == *" ${candidate} "* ]]; then
+            continue
+        fi
+        seen="${seen} ${candidate}"
+        if [[ -f "${candidate}/ss-server" && -f "${candidate}/ss-manager" ]]; then
+            if binary_is_compatible "${candidate}/ss-manager"; then
+                echo "Uyumlu prebuilt: ${candidate}" >> "${FULL_LOG}"
+                cache_prebuilt_from_dir "${candidate}"
+                return 0
+            fi
+            echo "Prebuilt glibc uyumsuz atlandi: ${candidate}" >> "${FULL_LOG}"
+        fi
+    done < <(prebuilt_candidate_dirs "${base}" "${tag}")
+
     return 1
+}
+
+function cache_libev_source_tree() {
+    local src_root="$1"
+    if [[ ! -f "${src_root}/CMakeLists.txt" ]]; then
+        return 1
+    fi
+    mkdir -p "${LIBEV_SRC_DIR}"
+    rsync -a --delete "${src_root}/" "${LIBEV_SRC_DIR}/"
+    return 0
+}
+
+function install_build_dependencies() {
+    apt_install \
+        build-essential cmake pkg-config \
+        libev-dev libsodium-dev libpcre2-dev libc-ares-dev libmbedtls-dev \
+        2>/dev/null || apt_install \
+        build-essential cmake pkg-config \
+        libev-dev libsodium-dev libpcre2-dev libc-ares-dev libmbedcrypto-dev
+}
+
+function build_shadowsocks_from_source() {
+    local src="${LIBEV_SRC_DIR}"
+    local build_dir="${LIBEV_INSTALL_DIR}/build"
+    local built_server built_manager
+    local -i jobs
+
+    if [[ ! -f "${src}/CMakeLists.txt" ]]; then
+        log_error "Kaynak kod bulunamadi: ${src}"
+        return 1
+    fi
+
+    echo "Kaynak derleme basliyor (sunucu glibc: $(host_glibc_version))..." >> "${FULL_LOG}"
+    install_build_dependencies
+
+    rm -rf "${build_dir}"
+    mkdir -p "${build_dir}"
+
+    if ! cmake -S "${src}" -B "${build_dir}" \
+        -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF >> "${FULL_LOG}" 2>&1; then
+        log_error "cmake basarisiz (tam log: ${FULL_LOG})"
+        return 1
+    fi
+
+    jobs="$(nproc 2>/dev/null || echo 2)"
+    if ! cmake --build "${build_dir}" --target ss-server-shared ss-manager-shared -j"${jobs}" >> "${FULL_LOG}" 2>&1; then
+        log_error "Derleme basarisiz (tam log: ${FULL_LOG})"
+        return 1
+    fi
+
+    built_server="${build_dir}/shared/bin/ss-server"
+    built_manager="${build_dir}/shared/bin/ss-manager"
+    if [[ ! -x "${built_server}" || ! -x "${built_manager}" ]]; then
+        log_error "Derleme ciktisi bulunamadi: ${build_dir}/shared/bin/"
+        return 1
+    fi
+
+    PREBUILT_BIN_DIR="${LIBEV_INSTALL_DIR}/prebuilt/${MACHINE_TYPE}"
+    mkdir -p "${PREBUILT_BIN_DIR}"
+    install -m 755 "${built_server}" "${PREBUILT_BIN_DIR}/ss-server"
+    install -m 755 "${built_manager}" "${PREBUILT_BIN_DIR}/ss-manager"
+    install -m 755 "${built_server}" /usr/local/bin/ss-server
+    install -m 755 "${built_manager}" /usr/local/bin/ss-manager
+    echo "Kaynak derleme tamamlandi." >> "${FULL_LOG}"
+    return 0
 }
 
 function fetch_server_sources() {
@@ -262,9 +424,12 @@ function fetch_server_sources() {
             exit 1
         fi
         if ! try_cache_prebuilt "${src_root}/bin/${MACHINE_TYPE}"; then
-            log_error "On derlenmis binary bulunamadi: ${src_root}/bin/${MACHINE_TYPE}/"
-            return 1
+            echo "Uyumlu prebuilt yok; kaynak derleme kullanilacak." >> "${FULL_LOG}"
         fi
+        cache_libev_source_tree "${src_root}/shadowsocks-libev" || {
+            log_error "Kaynak agaci bulunamadi: ${src_root}/shadowsocks-libev"
+            return 1
+        }
         rsync -a "${src_root}/ss-api/" "${LIBEV_SS_API_DIR}/"
         if [[ -f "${src_root}/install_scripts/uninstall_server.sh" ]]; then
             install -m 755 "${src_root}/install_scripts/uninstall_server.sh" "${LIBEV_SS_API_DIR}/uninstall_server.sh"
@@ -278,7 +443,7 @@ function fetch_server_sources() {
 
     git clone -q --depth 1 --filter=blob:none --sparse --branch "${LIBEV_BRANCH}" \
         "${repo_url}" "${clone_dir}"
-    git -C "${clone_dir}" sparse-checkout set server/bin server/ss-api server/install_scripts
+    git -C "${clone_dir}" sparse-checkout set server/bin server/ss-api server/install_scripts server/shadowsocks-libev
 
     if [[ ! -d "${clone_dir}/server/ss-api" ]]; then
         log_error "Repo yapisi hatali: server/ss-api bulunamadi (${LIBEV_REPO})"
@@ -287,11 +452,14 @@ function fetch_server_sources() {
     fi
 
     if ! try_cache_prebuilt "${clone_dir}/server/bin/${MACHINE_TYPE}"; then
-        log_error "On derlenmis binary bulunamadi: server/bin/${MACHINE_TYPE}/"
-        log_error "Gelistirici: bash server/build-wsl.sh calistirip GitHub'a push edin."
+        echo "Uyumlu prebuilt yok; kaynak derleme kullanilacak." >> "${FULL_LOG}"
+    fi
+
+    cache_libev_source_tree "${clone_dir}/server/shadowsocks-libev" || {
+        log_error "Kaynak agaci bulunamadi: server/shadowsocks-libev (${LIBEV_REPO})"
         rm -rf "${clone_dir}"
         return 1
-    fi
+    }
 
     rsync -a "${clone_dir}/server/ss-api/" "${LIBEV_SS_API_DIR}/"
     if [[ -f "${clone_dir}/server/install_scripts/uninstall_server.sh" ]]; then
@@ -302,13 +470,20 @@ function fetch_server_sources() {
 }
 
 function install_shadowsocks_binaries() {
-    if [[ -z "${PREBUILT_BIN_DIR}" || ! -x "${PREBUILT_BIN_DIR}/ss-server" || ! -x "${PREBUILT_BIN_DIR}/ss-manager" ]]; then
-        log_error "On derlenmis binary hazir degil (ic hata)."
+    if [[ -n "${PREBUILT_BIN_DIR}" && -x "${PREBUILT_BIN_DIR}/ss-server" && -x "${PREBUILT_BIN_DIR}/ss-manager" ]]; then
+        install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
+        install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
+        if verify_binary_deps; then
+            return 0
+        fi
+        echo "Prebuilt kuruldu ama calismadi; kaynak derleme deneniyor..." >> "${FULL_LOG}"
+    fi
+
+    if ! build_shadowsocks_from_source; then
+        log_error "Binary kurulamadi. Sunucu glibc: $(host_glibc_version)"
         return 1
     fi
 
-    install -m 755 "${PREBUILT_BIN_DIR}/ss-server" /usr/local/bin/ss-server
-    install -m 755 "${PREBUILT_BIN_DIR}/ss-manager" /usr/local/bin/ss-manager
     verify_binary_deps
 }
 
@@ -617,6 +792,8 @@ function main() {
         run_step "Public IP tespit ediliyor" detect_public_ip
     fi
     readonly PUBLIC_HOSTNAME
+
+    echo "Tespit edilen OS: $(detect_host_os_tag) (glibc $(host_glibc_version))" >> "${FULL_LOG}"
 
     run_step "Bagimliliklar kuruluyor" install_dependencies
     if (( FLAGS_LOCAL == 1 )); then

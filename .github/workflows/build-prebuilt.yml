@@ -1,0 +1,97 @@
+name: Build prebuilt binaries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/shadowsocks-libev/**'
+      - 'server/build-wsl.sh'
+      - 'server/build-all.sh'
+      - 'server/install_scripts/install_server.sh'
+      - '.github/workflows/build-prebuilt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            tag: ubuntu22.04
+            glibc_alias: glibc2.35
+          - runner: ubuntu-24.04
+            tag: ubuntu24.04
+            glibc_alias: glibc2.38
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential cmake pkg-config \
+            libev-dev libsodium-dev libpcre2-dev libc-ares-dev libmbedtls-dev
+
+      - name: Build ss-server and ss-manager
+        run: |
+          cmake -S server/shadowsocks-libev -B /tmp/libev-build \
+            -DCMAKE_BUILD_TYPE=Release -DWITH_STATIC=OFF
+          cmake --build /tmp/libev-build --target ss-server-shared ss-manager-shared -j"$(nproc)"
+
+      - name: Stage binaries
+        run: |
+          mkdir -p "staging/${{ matrix.tag }}" "staging/${{ matrix.glibc_alias }}"
+          cp /tmp/libev-build/shared/bin/ss-server /tmp/libev-build/shared/bin/ss-manager "staging/${{ matrix.tag }}/"
+          cp /tmp/libev-build/shared/bin/ss-server /tmp/libev-build/shared/bin/ss-manager "staging/${{ matrix.glibc_alias }}/"
+          chmod 755 staging/${{ matrix.tag }}/* staging/${{ matrix.glibc_alias }}/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.tag }}
+          path: staging/
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Install into repo tree
+        run: |
+          rm -rf server/bin/x86_64/ubuntu22.04 server/bin/x86_64/ubuntu24.04 \
+                 server/bin/x86_64/glibc2.35 server/bin/x86_64/glibc2.38 \
+                 server/bin/x86_64/ss-server server/bin/x86_64/ss-manager
+          mkdir -p server/bin/x86_64/ubuntu22.04 server/bin/x86_64/glibc2.35 \
+                   server/bin/x86_64/ubuntu24.04 server/bin/x86_64/glibc2.38
+
+          cp artifacts/bin-ubuntu22.04/ubuntu22.04/* server/bin/x86_64/ubuntu22.04/
+          cp artifacts/bin-ubuntu22.04/glibc2.35/* server/bin/x86_64/glibc2.35/
+          cp artifacts/bin-ubuntu24.04/ubuntu24.04/* server/bin/x86_64/ubuntu24.04/
+          cp artifacts/bin-ubuntu24.04/glibc2.38/* server/bin/x86_64/glibc2.38/
+          ls -laR server/bin/x86_64/
+
+      - name: Commit and push binaries
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/bin/x86_64/
+          if git diff --staged --quiet; then
+            echo "No binary changes to commit."
+            exit 0
+          fi
+          git commit -m "ci: update prebuilt binaries (ubuntu22.04 + ubuntu24.04)"
+          git push
