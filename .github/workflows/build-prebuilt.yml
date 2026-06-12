@@ -72,16 +72,32 @@ jobs:
 
       - name: Install into repo tree
         run: |
+          set -euo pipefail
+          echo "Artifact tree:"
+          find artifacts -type f | sort
+
+          install_pair() {
+            local src_dir="$1"
+            local dst_dir="$2"
+            mkdir -p "$dst_dir"
+            cp -f "${src_dir}/ss-server" "${src_dir}/ss-manager" "$dst_dir/"
+            chmod 755 "$dst_dir"/*
+          }
+
           rm -rf server/bin/x86_64/ubuntu22.04 server/bin/x86_64/ubuntu24.04 \
                  server/bin/x86_64/glibc2.35 server/bin/x86_64/glibc2.38 \
                  server/bin/x86_64/ss-server server/bin/x86_64/ss-manager
-          mkdir -p server/bin/x86_64/ubuntu22.04 server/bin/x86_64/glibc2.35 \
-                   server/bin/x86_64/ubuntu24.04 server/bin/x86_64/glibc2.38
 
-          cp artifacts/bin-ubuntu22.04/ubuntu22.04/* server/bin/x86_64/ubuntu22.04/
-          cp artifacts/bin-ubuntu22.04/glibc2.35/* server/bin/x86_64/glibc2.35/
-          cp artifacts/bin-ubuntu24.04/ubuntu24.04/* server/bin/x86_64/ubuntu24.04/
-          cp artifacts/bin-ubuntu24.04/glibc2.38/* server/bin/x86_64/glibc2.38/
+          for tag in ubuntu22.04 glibc2.35 ubuntu24.04 glibc2.38; do
+            src="$(find artifacts -type d -name "$tag" 2>/dev/null | head -1)"
+            if [[ -z "$src" || ! -f "$src/ss-server" ]]; then
+              echo "ERROR: artifact bulunamadi: ${tag}"
+              find artifacts -maxdepth 4 -type d
+              exit 1
+            fi
+            install_pair "$src" "server/bin/x86_64/${tag}"
+          done
+
           ls -laR server/bin/x86_64/
 
       - name: Commit and push binaries
