@@ -211,7 +211,7 @@ function install_dependencies() {
     apt_update
     apt_install \
         python3 python3-pip curl ca-certificates git \
-        rsync nginx openssl libcap2-bin \
+        rsync nginx openssl libcap2-bin iproute2 \
         libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7 \
         2>/dev/null || apt_install \
         python3 python3-pip curl ca-certificates git \
@@ -509,6 +509,34 @@ EOF
     chmod +x /usr/local/bin/libev
 }
 
+function configure_system_limits() {
+    cat > /etc/security/limits.d/shadowsocks-libev.conf <<'EOF'
+root soft nofile 65535
+root hard nofile 65535
+* soft nofile 65535
+* hard nofile 65535
+EOF
+
+    cat > /etc/sysctl.d/99-shadowsocks-libev.conf <<'EOF'
+fs.file-max = 65535
+EOF
+    sysctl -p /etc/sysctl.d/99-shadowsocks-libev.conf >> "${FULL_LOG}" 2>&1 || true
+
+    mkdir -p /etc/systemd/system/shadowsocks-manager.service.d
+    cat > /etc/systemd/system/shadowsocks-manager.service.d/limits.conf <<'EOF'
+[Service]
+LimitNOFILE=65535
+EOF
+
+    mkdir -p /etc/systemd/system/ss-api.service.d
+    cat > /etc/systemd/system/ss-api.service.d/limits.conf <<'EOF'
+[Service]
+LimitNOFILE=65535
+EOF
+
+    echo "Sistem limitleri: nofile=65535, fs.file-max=65535" >> "${FULL_LOG}"
+}
+
 function write_configs() {
     rm -f "${MANAGER_SOCKET}"
 
@@ -533,11 +561,12 @@ After=network.target
 [Service]
 Type=simple
 User=root
+LimitNOFILE=65535
 StateDirectory=shadowsocks-manager
 RuntimeDirectory=shadowsocks-manager
 ExecStartPre=/bin/mkdir -p ${LIBEV_WORKDIR}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/ss-manager -u --executable /usr/local/bin/ss-server --manager-address ${MANAGER_SOCKET} --workdir ${LIBEV_WORKDIR} -s 0.0.0.0 -m chacha20-ietf-poly1305
+ExecStart=/usr/local/bin/ss-manager -u -n 65535 --executable /usr/local/bin/ss-server --manager-address ${MANAGER_SOCKET} --workdir ${LIBEV_WORKDIR} -s 0.0.0.0 -m chacha20-ietf-poly1305
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -556,6 +585,7 @@ Requires=shadowsocks-manager.service
 [Service]
 Type=simple
 User=root
+LimitNOFILE=65535
 WorkingDirectory=${LIBEV_SS_API_DIR}
 ExecStart=/usr/bin/python3 ${LIBEV_SS_API_DIR}/ss_api.py --host 127.0.0.1 --port ${API_PORT} --manager-address ${MANAGER_SOCKET} --server-ip ${PUBLIC_HOSTNAME} --api-secret ${LIBEV_API_SECRET} --port-store ${LIBEV_WORKDIR}/ports.json
 StandardOutput=null
@@ -684,6 +714,41 @@ PYEOF
     readonly FIRST_KEY_JSON
 }
 
+function verify_vpn_listening() {
+    local port listening=0
+    port="$(python3 <<PYEOF
+import sys
+sys.path.insert(0, "${LIBEV_SS_API_DIR}")
+from key_store import KeyManager
+km = KeyManager.from_config("/etc/libev/cli.json")
+found = km.find_by_name("default")
+print(found[0] if found else "")
+PYEOF
+)" || port=""
+
+    if [[ -z "${port}" ]]; then
+        echo "VPN port dogrulama atlandi (default anahtar yok)" >> "${FULL_LOG}"
+        return 0
+    fi
+
+    if command_exists ss; then
+        ss -ltn 2>/dev/null | grep -qE ":${port}( |$)" && listening=1
+        ss -lun 2>/dev/null | grep -qE ":${port}( |$)" && listening=1
+    elif command_exists netstat; then
+        netstat -ltn 2>/dev/null | grep -q ":${port} " && listening=1
+        netstat -lun 2>/dev/null | grep -q ":${port} " && listening=1
+    fi
+
+    if (( listening == 0 )); then
+        log_error "VPN port ${port} sunucuda dinlenmiyor! journalctl -u shadowsocks-manager -n 30"
+        journalctl -u shadowsocks-manager -n 20 --no-pager >> "${FULL_LOG}" 2>&1 || true
+        return 1
+    fi
+
+    echo "VPN port ${port} dinleniyor (ss-manager OK)" >> "${FULL_LOG}"
+    return 0
+}
+
 function write_access_config() {
     readonly ACCESS_CONFIG="${LIBEV_INSTALL_DIR}/access.txt"
     mkdir -p "${LIBEV_INSTALL_DIR}"
@@ -702,8 +767,23 @@ EOF
 }
 
 function output_install_result() {
-    local outline_json
+    local outline_json test_port test_url
     outline_json="$(printf '{"apiUrl":"%s","certSha256":"%s"}' "${PUBLIC_API_URL}" "${CERT_SHA256}")"
+
+    read -r test_port test_url < <(python3 <<PYEOF 2>/dev/null || true
+import sys
+sys.path.insert(0, "${LIBEV_SS_API_DIR}")
+from key_store import KeyManager
+km = KeyManager.from_config("/etc/libev/cli.json")
+found = km.find_by_name("default")
+if not found:
+    print("", "")
+else:
+    port, entry = found
+    payload = km.key_payload(port, entry)
+    print(port, payload.get("accessUrl", ""))
+PYEOF
+)
 
     cat <<EOF
 
@@ -714,10 +794,22 @@ Outline uyumlu API JSON (bot config icin):
 ${outline_json}
 
 Onemli:
-- API portu: ${API_TLS_PORT}/tcp (eski 8080 degil)
-- VPN port araligi: ${LIBEV_PORT_START}-${LIBEV_PORT_END}/tcp+udp
-- Bulut panelinde bu portlari acin (SSH kesilmesi genelde apt/needrestart kaynaklidir; script artik servisleri otomatik yeniden baslatmaz)
+- API portu: ${API_TLS_PORT}/tcp
+- VPN port araligi: ${LIBEV_PORT_START}-${LIBEV_PORT_END}/tcp+udp (bulut panelinde acin!)
+- nofile limiti: 65535 (ss-manager -n 65535)
+EOF
+
+    if [[ -n "${test_port}" ]]; then
+        cat <<EOF
+- Test VPN portu: ${test_port} (sunucuda dinleniyor)
+- Ornek ss://: ${test_url}
+EOF
+    fi
+
+    cat <<EOF
 - Kurulum logu: ${FULL_LOG}
+
+ss:// calismiyorsa API degil, VPN portlari (${LIBEV_PORT_START}-${LIBEV_PORT_END}) firewall'da kapali olabilir.
 EOF
 }
 
@@ -826,12 +918,14 @@ function main() {
     run_step "Python bagimliliklari kuruluyor" install_python_deps
     run_step "API secret uretiliyor" generate_api_secret
     run_step "Yapilandirma yaziliyor" write_configs
+    run_step "Sistem limitleri ayarlaniyor" configure_system_limits
     rm -f "${LIBEV_WORKDIR}"/.shadowsocks_*.iplock "${LIBEV_WORKDIR}"/.shadowsocks_*.ipstatus 2>/dev/null || true
     run_step "HTTPS API (nginx) kuruluyor" setup_api_tls
     run_step "Servisler baslatiliyor" start_services
     run_step "ss-manager bekleniyor" wait_for_manager
     run_step "API bekleniyor" wait_for_api
     run_step "Ilk anahtar olusturuluyor" create_first_access_key
+    run_step "VPN portu dogrulaniyor" verify_vpn_listening
     run_step "Access config yaziliyor" write_access_config
 
     output_install_result
