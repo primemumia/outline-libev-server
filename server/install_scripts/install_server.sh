@@ -215,11 +215,11 @@ function install_dependencies() {
         libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto7 \
         2>/dev/null || apt_install \
         python3 python3-pip curl ca-certificates git \
-        rsync nginx openssl libcap2-bin \
+        rsync nginx openssl libcap2-bin iproute2 \
         libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedtls14 \
         2>/dev/null || apt_install \
         python3 python3-pip curl ca-certificates git \
-        rsync nginx openssl libcap2-bin \
+        rsync nginx openssl libcap2-bin iproute2 \
         libev4 libpcre2-8-0 libc-ares2 libsodium23 libmbedcrypto3
 }
 
