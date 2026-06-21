@@ -174,8 +174,37 @@ function safe_base64() {
     base64 -w 0 2>/dev/null | tr '/+' '_-' | tr -d '='
 }
 
+function load_existing_api_secret() {
+    local line secret
+    if [[ -f "${LIBEV_INSTALL_DIR}/access.txt" ]]; then
+        line="$(grep -m1 '^internalApiUrl:' "${LIBEV_INSTALL_DIR}/access.txt" 2>/dev/null || true)"
+        if [[ -n "${line}" ]]; then
+            secret="${line#*://*/}"
+            secret="${secret%%[[:space:]]*}"
+            if [[ -n "${secret}" ]]; then
+                echo "${secret}"
+                return 0
+            fi
+        fi
+    fi
+    if [[ -f /etc/systemd/system/ss-api.service ]]; then
+        secret="$(sed -n 's/.*--api-secret \([^[:space:]]*\).*/\1/p' /etc/systemd/system/ss-api.service | head -1)"
+        if [[ -n "${secret}" ]]; then
+            echo "${secret}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 function generate_api_secret() {
     if [[ -n "${LIBEV_API_SECRET:-}" ]]; then
+        readonly LIBEV_API_SECRET
+        return 0
+    fi
+    if secret="$(load_existing_api_secret)"; then
+        LIBEV_API_SECRET="${secret}"
+        echo "Mevcut API secret korunuyor (yeniden kurulum)." >> "${FULL_LOG}"
         readonly LIBEV_API_SECRET
         return 0
     fi
@@ -690,6 +719,29 @@ function wait_for_manager() {
     return 1
 }
 
+function sync_manager_ports() {
+    python3 <<PYEOF
+import sys
+sys.path.insert(0, "${LIBEV_SS_API_DIR}")
+from key_store import KeyManager
+
+km = KeyManager.from_config("/etc/libev/cli.json")
+km.client.ping()
+result = km.sync_to_manager()
+print(
+    f"Sync: {result['added']} eklendi, "
+    f"{result['already_active']} zaten vardi, toplam {result['total']}"
+)
+if result["errors"]:
+    for err in result["errors"][:5]:
+        print(
+            f"  HATA port {err.get('port')}: {err.get('error')}",
+            file=sys.stderr,
+        )
+    sys.exit(1)
+PYEOF
+}
+
 function wait_for_api() {
     local -i i
     for i in $(seq 1 30); do
@@ -820,6 +872,7 @@ EOF
 - Kurulum logu: ${FULL_LOG}
 
 ss:// calismiyorsa (ufw kapali olsa bile):
+- Port senkronu: libev sync  (manager restart sonrasi ports.json -> ss-manager)
 - ss:// icindeki IP sunucunun gercek public IP'si mi? (curl -4 ifconfig.me ile karsilastirin)
 - Port dinleniyor mu? ss -ltn | grep PORT
 - IP kilidi var mi? libev status port PORT  /  libev unlock-ip key ISIM
@@ -934,11 +987,16 @@ function main() {
     run_step "API secret uretiliyor" generate_api_secret
     run_step "Yapilandirma yaziliyor" write_configs
     run_step "Sistem limitleri ayarlaniyor" configure_system_limits
-    rm -f "${LIBEV_WORKDIR}"/.shadowsocks_*.iplock "${LIBEV_WORKDIR}"/.shadowsocks_*.ipstatus 2>/dev/null || true
+    if [[ ! -s "${LIBEV_WORKDIR}/ports.json" ]]; then
+        rm -f "${LIBEV_WORKDIR}"/.shadowsocks_*.iplock "${LIBEV_WORKDIR}"/.shadowsocks_*.ipstatus 2>/dev/null || true
+    else
+        echo "Mevcut ports.json korunuyor; IP kilidi dosyalari silinmedi." >> "${FULL_LOG}"
+    fi
     run_step "HTTPS API (nginx) kuruluyor" setup_api_tls
     run_step "Servisler baslatiliyor" start_services
     run_step "ss-manager bekleniyor" wait_for_manager
     run_step "API bekleniyor" wait_for_api
+    run_step "ss-manager portlari senkronize ediliyor" sync_manager_ports
     run_step "Ilk anahtar olusturuluyor" create_first_access_key
     run_step "VPN portu dogrulaniyor" verify_vpn_listening
     run_step "Access config yaziliyor" write_access_config

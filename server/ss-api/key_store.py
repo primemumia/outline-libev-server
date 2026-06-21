@@ -257,3 +257,54 @@ class KeyManager:
         entry["locked_ip"] = None
         self.ports[str(port)] = entry
         self.save()
+
+    def sync_to_manager(self) -> Dict[str, Any]:
+        """ports.json kayitlarini ss-manager'a yukler (manager restart sonrasi)."""
+        manager_ports: set = set()
+        try:
+            for item in self.client.list_ports():
+                port_val = item.get("server_port") or item.get("port")
+                if port_val is not None:
+                    manager_ports.add(int(port_val))
+        except Exception:
+            pass
+
+        added = 0
+        skipped = 0
+        errors: List[Dict[str, Any]] = []
+
+        for port_str in sorted(self.ports.keys(), key=lambda x: int(x)):
+            port = int(port_str)
+            entry = self.ports[port_str]
+            method = entry.get("method", DEFAULT_METHOD)
+            password = entry["password"]
+            locked_ip = (entry.get("locked_ip") or "").strip()
+
+            if port in manager_ports:
+                skipped += 1
+                if locked_ip:
+                    try:
+                        status = self.client.ip_status(port)
+                        current = (status.get("locked_ip") or "").strip()
+                        if current != locked_ip:
+                            self.client.set_ip(port, locked_ip)
+                    except Exception as exc:
+                        errors.append(
+                            {"port": port, "name": entry.get("name"), "error": f"lock_ip: {exc}"}
+                        )
+                continue
+
+            try:
+                self.client.add_port(port, password, method)
+                if locked_ip:
+                    self.client.set_ip(port, locked_ip)
+                added += 1
+            except Exception as exc:
+                errors.append({"port": port, "name": entry.get("name"), "error": str(exc)})
+
+        return {
+            "total": len(self.ports),
+            "already_active": skipped,
+            "added": added,
+            "errors": errors,
+        }

@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     unlock_key = unlock_sub.add_parser("key")
     unlock_key.add_argument("name")
 
+    sub.add_parser("sync", help="ports.json anahtarlarini ss-manager'a yukle")
+
     return parser
 
 
@@ -230,6 +232,25 @@ def main(argv=None) -> int:
             manager.clear_lock_ip(args.name)
             print(f"✅ IP kilidi kaldırıldı: {args.name}")
             return 0
+
+        if args.command == "sync":
+            ensure_manager()
+            result = manager.sync_to_manager()
+            if args.json:
+                print_json(result)
+            else:
+                print(
+                    f"✅ Sync: {result['added']} port eklendi, "
+                    f"{result['already_active']} zaten aktif, toplam {result['total']}"
+                )
+                if result["errors"]:
+                    print(f"⚠ {len(result['errors'])} hata:", file=sys.stderr)
+                    for err in result["errors"][:10]:
+                        print(
+                            f"  port {err.get('port')} ({err.get('name', '-')}): {err.get('error')}",
+                            file=sys.stderr,
+                        )
+            return 1 if result["errors"] else 0
 
         parser.print_help()
         return 2

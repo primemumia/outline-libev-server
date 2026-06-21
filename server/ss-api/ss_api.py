@@ -5,6 +5,7 @@ Outline-compatible HTTP API for shadowsocks-libev (ss-manager backend).
 """
 
 import argparse
+import asyncio
 import json
 import logging
 from typing import Any, Dict
@@ -151,9 +152,25 @@ class SSApiServer:
             }
         )
 
+    async def _sync_manager_on_startup(self, app: web.Application) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, self.keys.sync_to_manager)
+            if result["added"] or result["errors"]:
+                logger.warning(
+                    "ss-manager sync: total=%s added=%s already=%s errors=%s",
+                    result["total"],
+                    result["added"],
+                    result["already_active"],
+                    len(result["errors"]),
+                )
+        except Exception as exc:
+            logger.error("ss-manager sync failed: %s", exc)
+
     def build_app(self) -> web.Application:
         app = web.Application()
         secret = f"/{self.api_secret}" if self.api_secret else ""
+        app.on_startup.append(self._sync_manager_on_startup)
 
         app.router.add_post(f"{secret}/access-keys", self.handle_create_key)
         app.router.add_get(f"{secret}/access-keys", self.handle_list_keys)
