@@ -207,6 +207,16 @@ function detect_public_ip() {
     return 1
 }
 
+function refresh_server_ip() {
+    local detected
+    detected="$(fetch 'https://icanhazip.com/' 2>/dev/null | tr -d '[:space:]')" || detected=""
+    [[ -n "${detected}" ]] || return 0
+    if [[ "${detected}" != "${PUBLIC_HOSTNAME}" ]]; then
+        echo "Public IP yenilendi: ${PUBLIC_HOSTNAME} -> ${detected}" >> "${FULL_LOG}"
+        PUBLIC_HOSTNAME="${detected}"
+    fi
+}
+
 function install_dependencies() {
     apt_update
     apt_install \
@@ -809,7 +819,11 @@ EOF
     cat <<EOF
 - Kurulum logu: ${FULL_LOG}
 
-ss:// calismiyorsa API degil, VPN portlari (${LIBEV_PORT_START}-${LIBEV_PORT_END}) firewall'da kapali olabilir.
+ss:// calismiyorsa (ufw kapali olsa bile):
+- ss:// icindeki IP sunucunun gercek public IP'si mi? (curl -4 ifconfig.me ile karsilastirin)
+- Port dinleniyor mu? ss -ltn | grep PORT
+- IP kilidi var mi? libev status port PORT  /  libev unlock-ip key ISIM
+- journalctl -u shadowsocks-manager -n 30
 EOF
 }
 
@@ -904,6 +918,7 @@ function main() {
     if [[ -z "${PUBLIC_HOSTNAME}" ]]; then
         run_step "Public IP tespit ediliyor" detect_public_ip
     fi
+    refresh_server_ip
     readonly PUBLIC_HOSTNAME
 
     echo "Tespit edilen OS: $(detect_host_os_tag) (glibc $(host_glibc_version))" >> "${FULL_LOG}"
