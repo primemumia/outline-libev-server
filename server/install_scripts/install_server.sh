@@ -19,7 +19,8 @@
 # Bayraklar:
 #   --hostname HOST     Sunucu public IP veya domain
 #   --api-port PORT     ss-api HTTP portu (varsayilan: 8087, ic ag)
-#   --api-tls-port PORT Dis HTTPS API portu (varsayilan: 8080, Outline uyumlu)
+#   --api-tls-port PORT Dis HTTPS API portu (varsayilan: 55555)
+#   LIBEV_API_TLS_PORT ortam degiskeni ile de ayarlanabilir
 #   --manager-port PORT (eski) UDP yerine unix socket kullanilir, yok sayilir
 #   --local             GitHub yerine yerel server/ dizinini kullan (out.sh ile)
 #   -h, --help          Yardim
@@ -28,7 +29,7 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
-export NEEDRESTART_MODE=a
+export NEEDRESTART_MODE=l
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PIP_NO_INPUT=1
 export PIP_PROGRESS_BAR=off
@@ -567,6 +568,15 @@ WantedBy=multi-user.target
 EOF
 }
 
+function configure_firewall() {
+    if command_exists ufw && ufw status 2>/dev/null | grep -qi 'Status: active'; then
+        echo "UFW aktif; portlar aciliyor: ${API_TLS_PORT}/tcp, ${LIBEV_PORT_START}-${LIBEV_PORT_END}/tcp+udp" >> "${FULL_LOG}"
+        ufw allow "${API_TLS_PORT}/tcp" >/dev/null 2>&1 || true
+        ufw allow "${LIBEV_PORT_START}:${LIBEV_PORT_END}/tcp" >/dev/null 2>&1 || true
+        ufw allow "${LIBEV_PORT_START}:${LIBEV_PORT_END}/udp" >/dev/null 2>&1 || true
+    fi
+}
+
 function setup_api_tls() {
     mkdir -p "${SSL_DIR}"
     if [[ ! -f "${SSL_DIR}/cert.pem" ]]; then
@@ -604,7 +614,12 @@ EOF
     rm -f /etc/nginx/sites-enabled/default
     nginx -t >/dev/null 2>&1
     systemctl enable nginx >/dev/null 2>&1
-    systemctl restart nginx >/dev/null 2>&1
+    if systemctl is-active --quiet nginx; then
+        systemctl reload nginx >/dev/null 2>&1
+    else
+        systemctl start nginx >/dev/null 2>&1
+    fi
+    configure_firewall
 }
 
 function start_services() {
@@ -697,6 +712,12 @@ Congratulations! This Libev server is ready to use.
 Outline uyumlu API JSON (bot config icin):
 
 ${outline_json}
+
+Onemli:
+- API portu: ${API_TLS_PORT}/tcp (eski 8080 degil)
+- VPN port araligi: ${LIBEV_PORT_START}-${LIBEV_PORT_END}/tcp+udp
+- Bulut panelinde bu portlari acin (SSH kesilmesi genelde apt/needrestart kaynaklidir; script artik servisleri otomatik yeniden baslatmaz)
+- Kurulum logu: ${FULL_LOG}
 EOF
 }
 
@@ -709,7 +730,7 @@ function finish() {
         fi
         log_error "Kurulum basarisiz. Tam log: ${FULL_LOG}"
     else
-        rm -f "${FULL_LOG}" "${LAST_ERROR}"
+        echo "Kurulum tamamlandi. Log: ${FULL_LOG}" >> "${FULL_LOG}"
     fi
 }
 
@@ -779,7 +800,7 @@ function main() {
 
     API_TLS_PORT="${FLAGS_API_TLS_PORT}"
     if (( API_TLS_PORT == 0 )); then
-        API_TLS_PORT=8080
+        API_TLS_PORT="${LIBEV_API_TLS_PORT:-55555}"
     fi
     readonly API_TLS_PORT
 
